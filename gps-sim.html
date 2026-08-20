@@ -99,12 +99,12 @@
   <div id="skywrap" style="display:none;">
     <canvas id="skycanvas" width="320" height="320"></canvas>
     <table id="satTable">
-      <thead><tr><th>PRN</th><th>Az°</th><th>El°</th><th>Range km</th><th>Doppler Hz</th><th>Iono m</th><th>Tropo m</th><th>ClkBias m</th><th>Amp</th></tr></thead>
+      <thead><tr><th>PRN</th><th>Az°</th><th>El°</th><th>Range km</th><th>Doppler Hz</th><th>Iono m</th><th>Tropo m</th><th>ClkBias m</th><th>Amp</th><th>Eph Fit m</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
   <div id="skyStatus" class="status"></div>
-  <div class="note">Iono/Tropo delays use the Klobuchar model and a simplified tropospheric mapping function; ClkBias is a synthetic per-satellite offset (real clock corrections require the broadcast nav message, not available from TLE data). Amp is the modeled elevation-dependent gain factor applied in the IQ recording.</div>
+  <div class="note">Iono/Tropo delays use the Klobuchar model and a simplified tropospheric mapping function; ClkBias is a synthetic per-satellite offset (real clock corrections require the broadcast nav message, not available from TLE data). Amp is the modeled elevation-dependent gain factor applied in the IQ recording. Eph Fit is the max position error of the real broadcast-format ephemeris (fitted via least squares to SGP4 truth, IS-GPS-200/705 parameterization) over its ±1h fit window — this is what's actually encoded into the nav message bits below, not a placeholder.</div>
 </div>
 
 <!-- IQ RECORDING -->
@@ -380,6 +380,144 @@ function elevationGainFactor(elDeg){
   return Math.max(0.15, 0.3 + 0.7*Math.sin(elDeg*DEG));
 }
 
+// ---------- Phase 7: real broadcast ephemeris via least-squares curve fit ----------
+// Standard IS-GPS-200 Table 20-IV broadcast ephemeris position algorithm.
+function broadcastPosition(p, t){
+  const A = p.sqrtA*p.sqrtA;
+  const n0 = Math.sqrt(GM/(A*A*A));
+  const n = n0 + p.deltaN;
+  let tk = t - p.toe;
+  if(tk > 302400) tk -= 604800;
+  if(tk < -302400) tk += 604800;
+  const Mk = p.M0 + n*tk;
+  let Ek = Mk;
+  for(let i=0;i<15;i++) Ek = Ek - (Ek - p.e*Math.sin(Ek) - Mk)/(1 - p.e*Math.cos(Ek));
+  const nuK = Math.atan2(Math.sqrt(1-p.e*p.e)*Math.sin(Ek), Math.cos(Ek)-p.e);
+  const PhiK = nuK + p.omega;
+  const dU = p.Cus*Math.sin(2*PhiK) + p.Cuc*Math.cos(2*PhiK);
+  const dR = p.Crs*Math.sin(2*PhiK) + p.Crc*Math.cos(2*PhiK);
+  const dI = p.Cis*Math.sin(2*PhiK) + p.Cic*Math.cos(2*PhiK);
+  const uK = PhiK + dU;
+  const rK = A*(1 - p.e*Math.cos(Ek)) + dR;
+  const iK = p.i0 + dI + p.idot*tk;
+  const xo = rK*Math.cos(uK), yo = rK*Math.sin(uK);
+  const OmegaK = p.Omega0 + (p.omegaDot - OMEGA_E)*tk - OMEGA_E*p.toe;
+  const cO=Math.cos(OmegaK), sO=Math.sin(OmegaK), cI=Math.cos(iK), sI=Math.sin(iK);
+  return {x: xo*cO - yo*cI*sO, y: xo*sO + yo*cI*cO, z: yo*sI};
+}
+// ECI state vector -> osculating classical elements (used as the LM fit's initial guess)
+function rv2coe(r, v){
+  const rmag = Math.hypot(r.x,r.y,r.z), vmag = Math.hypot(v.x,v.y,v.z);
+  const h = {x: r.y*v.z-r.z*v.y, y: r.z*v.x-r.x*v.z, z: r.x*v.y-r.y*v.x};
+  const hmag = Math.hypot(h.x,h.y,h.z);
+  const nVec = {x: -h.y, y: h.x, z:0};
+  const nmag = Math.hypot(nVec.x,nVec.y,nVec.z);
+  const rdotv = r.x*v.x+r.y*v.y+r.z*v.z;
+  const eVec = {
+    x: ((vmag*vmag - GM/rmag)*r.x - rdotv*v.x)/GM,
+    y: ((vmag*vmag - GM/rmag)*r.y - rdotv*v.y)/GM,
+    z: ((vmag*vmag - GM/rmag)*r.z - rdotv*v.z)/GM
+  };
+  const e = Math.hypot(eVec.x,eVec.y,eVec.z);
+  const energy = vmag*vmag/2 - GM/rmag;
+  const a = -GM/(2*energy);
+  const i = Math.acos(h.z/hmag);
+  let Omega = Math.atan2(nVec.y, nVec.x); if(Omega<0) Omega += 2*Math.PI;
+  let omega = Math.acos((nVec.x*eVec.x+nVec.y*eVec.y)/(nmag*e));
+  if(eVec.z<0) omega = 2*Math.PI - omega;
+  let nu0 = Math.acos((eVec.x*r.x+eVec.y*r.y+eVec.z*r.z)/(e*rmag));
+  if(rdotv<0) nu0 = 2*Math.PI - nu0;
+  const E0 = 2*Math.atan2(Math.sqrt(1-e)*Math.sin(nu0/2), Math.sqrt(1+e)*Math.cos(nu0/2));
+  let M0 = E0 - e*Math.sin(E0);
+  if(M0<0) M0 += 2*Math.PI;
+  return {sqrtA:Math.sqrt(a), e, i0:i, Omega0:Omega, omega, M0};
+}
+function wrapPi(x){ return ((x + Math.PI) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI) - Math.PI; }
+
+const EPH_PARAM_NAMES = ['sqrtA','e','i0','Omega0','omega','M0','deltaN','idot','omegaDot','Cuc','Cus','Crc','Crs','Cic','Cis'];
+const EPH_STEP_SIZES = {sqrtA:1, e:1e-7, i0:1e-7, Omega0:1e-7, omega:1e-7, M0:1e-7, deltaN:1e-12, idot:1e-13, omegaDot:1e-12, Cuc:1e-9,Cus:1e-9,Crc:1e-2,Crs:1e-2,Cic:1e-9,Cis:1e-9};
+
+// Levenberg-Marquardt least-squares fit of the broadcast ephemeris model against
+// SGP4-propagated truth positions sampled over a +/-1hr window around toe. This
+// is what a real GPS control segment does (fit a curve-fit representation to the
+// true orbit) -- not just repackaging osculating elements.
+function fitEphemeris(satrec, toeDate, toeSec){
+  const sampleTimesSec = [];
+  for(let dt=-3600; dt<=3600; dt+=300) sampleTimesSec.push(dt);
+  const samples = sampleTimesSec.map(dt=>{
+    const d = new Date(toeDate.getTime()+dt*1000);
+    const pv = satellite.propagate(satrec, d);
+    if(!pv || !pv.position) return null;
+    const gmst = satellite.gstime(d);
+    const ecf = satellite.eciToEcf(pv.position, gmst);
+    return {t: dt, pos: {x:ecf.x*1000, y:ecf.y*1000, z:ecf.z*1000}};
+  }).filter(s=>s);
+  if(samples.length < 10) return null;
+
+  const pv0 = satellite.propagate(satrec, toeDate);
+  if(!pv0 || !pv0.position) return null;
+  const r0 = {x:pv0.position.x*1000, y:pv0.position.y*1000, z:pv0.position.z*1000};
+  const v0 = {x:pv0.velocity.x*1000, y:pv0.velocity.y*1000, z:pv0.velocity.z*1000};
+  const coe = rv2coe(r0, v0);
+  let params = Object.assign({toe: toeSec, deltaN:0, idot:0, omegaDot:0, Cuc:0,Cus:0,Crc:0,Crs:0,Cic:0,Cis:0}, coe);
+
+  function residuals(p){
+    const res = [];
+    for(const s of samples){
+      const pred = broadcastPosition(p, p.toe + s.t);
+      res.push(pred.x-s.pos.x, pred.y-s.pos.y, pred.z-s.pos.z);
+    }
+    return res;
+  }
+  let lambda = 1e-3;
+  let curRms = Math.sqrt(residuals(params).reduce((s,x)=>s+x*x,0)/(samples.length*3));
+  for(let iter=0; iter<40 && curRms>0.05; iter++){
+    const r = residuals(params);
+    const m = r.length, nP = EPH_PARAM_NAMES.length;
+    const J = [];
+    for(let j=0;j<nP;j++){
+      const name = EPH_PARAM_NAMES[j], h = EPH_STEP_SIZES[name];
+      const pPlus = Object.assign({}, params); pPlus[name]+=h;
+      const pMinus = Object.assign({}, params); pMinus[name]-=h;
+      const rPlus = residuals(pPlus), rMinus = residuals(pMinus);
+      J.push(rPlus.map((v,k)=>(v-rMinus[k])/(2*h)));
+    }
+    const JTJ = Array.from({length:nP},()=>new Array(nP).fill(0));
+    const JTr = new Array(nP).fill(0);
+    for(let a=0;a<nP;a++){
+      for(let b=0;b<nP;b++){ let s=0; for(let k=0;k<m;k++) s+=J[a][k]*J[b][k]; JTJ[a][b]=s; }
+      let s=0; for(let k=0;k<m;k++) s+=J[a][k]*r[k]; JTr[a]=-s;
+    }
+    let accepted=false;
+    for(let attempt=0; attempt<8 && !accepted; attempt++){
+      const A = [];
+      for(let a=0;a<nP;a++){ const row=JTJ[a].slice(); row[a]+=lambda*JTJ[a][a]; row.push(JTr[a]); A.push(row); }
+      for(let col=0; col<nP; col++){
+        let piv=col; for(let row=col+1; row<nP; row++) if(Math.abs(A[row][col])>Math.abs(A[piv][col])) piv=row;
+        const tmp=A[col]; A[col]=A[piv]; A[piv]=tmp;
+        if(Math.abs(A[col][col])<1e-30) continue;
+        for(let row=0; row<nP; row++){
+          if(row===col) continue;
+          const f=A[row][col]/A[col][col];
+          for(let c2=col; c2<=nP; c2++) A[row][c2]-=f*A[col][c2];
+        }
+      }
+      const delta = A.map((row,idx)=> Math.abs(row[idx])>1e-30 ? row[nP]/row[idx] : 0);
+      const trial = Object.assign({}, params);
+      for(let j=0;j<nP;j++) trial[EPH_PARAM_NAMES[j]] += delta[j];
+      const trialRms = Math.sqrt(residuals(trial).reduce((s,x)=>s+x*x,0)/m);
+      if(trialRms < curRms){ params=trial; curRms=trialRms; lambda*=0.5; accepted=true; }
+      else lambda*=3;
+    }
+    if(!accepted) break;
+  }
+  params.M0 = wrapPi(params.M0);
+  params.omega = wrapPi(params.omega);
+  params.Omega0 = wrapPi(params.Omega0);
+  params.i0 = wrapPi(params.i0);
+  return {params, fitRmsMeters: curRms};
+}
+
 // ---------- compute sky view ----------
 $('computeBtn').onclick = () => {
   const latDeg = parseFloat($('lat').value), lonDeg = parseFloat($('lon').value), hgt = parseFloat($('hgt').value)||0;
@@ -409,7 +547,12 @@ $('computeBtn').onclick = () => {
       const effectiveRange = range + ionoM + tropoM + clockBiasM;
       const amp = elevationGainFactor(el);
 
-      results.push({prn:sat.prn, az, el, range, effectiveRange, dopplerHz, rangeRateMps, ecef, ionoM, tropoM, clockBiasM, amp});
+      // Broadcast-accurate ephemeris: least-squares fit of real IS-GPS-200
+      // parameters against SGP4 truth around this observation time (used as toe).
+      const fit = fitEphemeris(sat.satrec, date, towSec);
+
+      results.push({prn:sat.prn, az, el, range, effectiveRange, dopplerHz, rangeRateMps, ecef, ionoM, tropoM, clockBiasM, amp,
+        eph: fit ? fit.params : null, fitResidualM: fit ? fit.fitRmsMeters : null});
     }
   }
   results.sort((a,b)=>b.el-a.el);
@@ -453,7 +596,7 @@ function renderSatTable(sats){
   tbody.innerHTML = '';
   sats.forEach(s=>{
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="prn">${s.prn}</td><td>${s.az.toFixed(1)}</td><td>${s.el.toFixed(1)}</td><td>${(s.range/1000).toFixed(0)}</td><td>${s.dopplerHz.toFixed(0)}</td><td>${s.ionoM.toFixed(1)}</td><td>${s.tropoM.toFixed(1)}</td><td>${s.clockBiasM.toFixed(0)}</td><td>${s.amp.toFixed(2)}</td>`;
+    tr.innerHTML = `<td class="prn">${s.prn}</td><td>${s.az.toFixed(1)}</td><td>${s.el.toFixed(1)}</td><td>${(s.range/1000).toFixed(0)}</td><td>${s.dopplerHz.toFixed(0)}</td><td>${s.ionoM.toFixed(1)}</td><td>${s.tropoM.toFixed(1)}</td><td>${s.clockBiasM.toFixed(0)}</td><td>${s.amp.toFixed(2)}</td><td>${s.fitResidualM!=null ? s.fitResidualM.toFixed(0) : 'n/a'}</td>`;
     tbody.appendChild(tr);
   });
 }

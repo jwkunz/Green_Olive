@@ -70,7 +70,41 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - Correlator remains L1 C/A only, as previously scoped — not extended to
     L5 in this phase
 
+- [~] **Phase 7 — Real broadcast ephemeris (LNAV) + CNAV + correlator worker** *(in progress)*
+  - **Done, verified:** genuine least-squares (Levenberg-Marquardt) curve
+    fit of real IS-GPS-200 Table 20-IV broadcast ephemeris parameters
+    against SGP4 truth over a +/-1hr window — converges to ~2cm RMS in
+    isolated testing (sub-meter in the live app), i.e. this fits the actual
+    orbit rather than just repackaging osculating elements
+  - **Done, verified:** real GPS LNAV parity algorithm (200/200 random
+    round-trip checks pass, single-bit corruption correctly detected) and
+    the exact subframe 1/2/3 bit layout (cross-checked against an
+    open-source decoder plus the official field-width table) — full
+    encode-then-independently-decode round trip recovers every field to
+    sub-LSB precision
+  - **Not yet done:** wiring the LNAV bit generator into actual signal
+    generation (currently the fitted ephemeris is computed and shown in the
+    sky-view table, but the transmitted L1 C/A nav bits are still the
+    synthetic stream from Phase 2 — replacing that is next)
+  - **Not yet done:** CNAV encoding (message types 10/11/30, CRC-24Q) for
+    L2C/L5, reusing the same fitted physical ephemeris
+  - **Not yet done:** correlator moved to a Worker with L2C/L5 support
+  - Mid-session note: an earlier, less-accurate ephemeris-fit
+    implementation (harmonic regression on osculating elements, ~300m
+    residual) was found already in the codebase mid-phase and replaced
+    with the verified LM version above once it was confirmed more accurate
+    and more faithful to "real least-squares fit"
+
+## Roadmap notation
+`[x]` = done and verified. `[~]` = partially done, see sub-bullets for
+exactly what's shipped vs still pending.
+
 ## Known limitations (current)
+
+- LNAV ephemeris (subframes 1-3) is fitted and correctly encodable/decodable
+  (see Phase 7) but not yet actually transmitted in generated recordings —
+  the L1 C/A signal still carries synthetic nav bits until that wiring lands
+- CNAV (L2C/L5) still carries synthetic message content entirely
 
 - L5 code generation was validated via self-consistency checks (matches the
   spec's own stated bit-ordering invariant) and statistical checks
