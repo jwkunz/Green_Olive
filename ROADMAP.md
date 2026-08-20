@@ -20,9 +20,18 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - AGC simulation
   - Quantization noise modeling beyond basic int16 clipping
 
-- [ ] **Phase 4 — Signal expansion**
-  - L2C and/or L5 signal support alongside L1 C/A
-  - Multipath modeling
+- [x] **Phase 4 — Signal expansion (partial)** *(L2C + multipath done)*
+  - L2C signal generation: real CM/CL codes from the ICD-GPS-200/IS-GPS-200
+    27-stage generator polynomial and official per-PRN initial-state table
+    (Table 3-IIa), correct chip-by-chip CM/CL multiplexing at 1.023 Mcps,
+    synthetic CNAV symbols on CM (dataless CL pilot), correct 1227.60 MHz
+    carrier used for Doppler scaling
+  - Automatic elevation-dependent multipath: one ground-bounce-style
+    reflection per satellite, short chip delay, amplitude strongest near the
+    horizon and fading toward zenith
+  - **Not yet done — moved to end of roadmap:** selectable L5 signal
+    generation (10.23 Mcps codes, ~10x the sample-rate/file-size cost of
+    L1/L2, separate 1176.45 MHz carrier — see below)
 
 - [ ] **Phase 5 — Performance & proof**
   - Move IQ generation into a Web Worker (unblocks higher sample
@@ -30,8 +39,20 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - Correlator view to despread the noise-buried signal live, proving
     satellites are recoverable — same principle a real receiver uses
 
+- [ ] **Phase 6 — Selectable L5 signal generation**
+  - Add L5 (1176.45 MHz, 10.23 Mcps I5/Q5 codes with NH secondary codes) as
+    a third selectable signal alongside L1 C/A and L2C
+  - Needs its own sample-rate tier (~20-25 MHz) given the file-size jump,
+    and likely its own output path since real receivers capture it on a
+    separate RF chain from L1/L2
+
 ## Known limitations (current)
 
+- L2C CNAV symbols are a synthetic 50 sps stream, not decoded/re-encoded
+  real CNAV messages (ephemeris/clock/almanac) — same reason as LNAV below
+- Multipath is a single automatic reflection tuned by elevation only; it
+  isn't scenario-specific (no manual control over number of reflections,
+  delay, or amplitude yet)
 - Front-end filter and AGC are baseband-equivalent approximations (real
   lowpass applied independently to I/Q), not a modeled real/complex bandpass
   RF chain
