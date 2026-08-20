@@ -48,17 +48,38 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
     correlation would need a much larger phase/block search space —
     noted as a future extension, not pursued yet given the cost/benefit)
 
-- [ ] **Phase 6 — Selectable L5 signal generation**
-  - Add L5 (1176.45 MHz, 10.23 Mcps I5/Q5 codes with NH secondary codes) as
-    a third selectable signal alongside L1 C/A and L2C
-  - Needs its own sample-rate tier (~20-25 MHz) given the file-size jump,
-    and likely its own output path since real receivers capture it on a
-    separate RF chain from L1/L2
+- [x] **Phase 6 — Selectable L5 signal generation** *(done)*
+  - Real I5/Q5 code generation per IS-GPS-705 (fetched primary spec directly
+    rather than working from memory, given this is meaningfully more complex
+    than L1/L2C): 13-stage XA generator (short-cycled 8190/8191) XORed with
+    a per-satellite/per-component XB generator, composite 10230-chip
+    (1ms) codes — verified via a self-consistency check derived from the
+    spec's own stated invariant (complement of the first 13 composite chips
+    equals the reversed initial-state vector), plus balance/distinctness/
+    autocorrelation checks against synthetic test data
+  - NH10 (I5) and NH20 (Q5, dataless pilot) Neuman-Hofman overlay codes from
+    the spec, applied at their correct 1 kHz rate
+  - True dual-quadrature modulation (I5 and Q5 are independent real bit
+    streams on the I/Q rails, not a single stream rotated by carrier phase
+    like L1/L2C) — implemented as a genuinely different combination path,
+    not a reuse of the L1/L2C structure
+  - Correct 1176.45 MHz carrier for Doppler scaling; new 20.46/25.575 MHz
+    sample-rate tiers (auto-filtered in the UI based on selected signal,
+    since L1/L2C's existing rates are far below L5's Nyquist requirement)
+    with an explicit file-size warning given the ~10x jump
+  - Correlator remains L1 C/A only, as previously scoped — not extended to
+    L5 in this phase
 
 ## Known limitations (current)
 
-- Correlator only supports L1 C/A recordings; L2C CM correlation isn't
-  implemented (would need a much larger phase/block search space)
+- L5 code generation was validated via self-consistency checks (matches the
+  spec's own stated bit-ordering invariant) and statistical checks
+  (balance, distinctness, autocorrelation), but not cross-checked against
+  an independent third-party reference vector the way L2C's PRN1 state was
+  — flagging this as a slightly lower confidence tier than L2C
+- L5 CNAV symbols are synthetic (same caveat as L1 LNAV / L2 CNAV below)
+- Correlator only supports L1 C/A recordings; L2C/L5 correlation isn't
+  implemented
 - Correlator's Doppler search is on a 500 Hz grid (nearest-bin match, not
   fine-resolution), and only searches the first ~20ms of a recording
 - L2C CNAV symbols are a synthetic 50 sps stream, not decoded/re-encoded
