@@ -168,7 +168,7 @@
 <!-- CORRELATOR -->
 <div class="panel">
   <div class="panel-title"><span class="dot"></span>4. Correlator / acquisition proof</div>
-  <div class="note">Runs a coarse code-phase × Doppler acquisition search against one PRN from the last recording, non-coherently integrating multiple 1ms blocks to pull the signal out of the noise — the same principle a real receiver's acquisition engine uses. Currently supports L1 C/A recordings only (L2C correlation planned).</div>
+  <div class="note">Now runs in a Worker (won't freeze the page) and supports L1 C/A and L2C (CM-only, full-resolution search restricted to this simulator's 0-1023 combined-chip generation range). Runs a code-phase × Doppler acquisition search against one PRN from the last recording, non-coherently integrating multiple coherent code-period blocks to pull the signal out of the noise — the same principle a real receiver's acquisition engine uses. L5 isn't supported: its 10.23 Mcps codes make a brute-force full-resolution search impractical in-browser (testing confirmed coarser phase steps don't work — PRN autocorrelation is too narrow to detect at reduced resolution).</div>
   <div class="row">
     <div class="field"><label>PRN</label><select id="corrPrn"><option value="">Generate a recording first</option></select></div>
     <div class="field"><button id="corrBtn" disabled>Run correlator</button></div>
@@ -1197,8 +1197,100 @@ function generateL5CnavSymbols(prn, durationSec, eph, clk, towBaseSec){
 }
 
 
+// ---------- Correlator / acquisition search (runs here so it can reuse the
+// already-verified code generators, and so it's off the main thread) ----------
+function runCorrelate(msg){
+  try {
+    const signal = msg.signal, prn = msg.prn, effFs = msg.effFs;
+    const iArr = new Float32Array(msg.iArr), qArr = new Float32Array(msg.qArr);
+    const blockLen = msg.blockLen, numBlocks = msg.numBlocks;
+
+    // Full-resolution (step=1) search is required: PRN code autocorrelation
+    // is only ~1 chip wide, so any coarser phase step essentially never
+    // lands close enough to detect the real peak (confirmed by testing --
+    // a coarse-stepped search found noise-level false peaks, not the
+    // signal). L2C's search is restricted to [0,1023) combined-chips,
+    // which matches this simulator's own generation range (codePhase0 is
+    // always in that range by construction) -- correct for recordings
+    // made by this app, not a general-purpose full-range L2C acquisition.
+    let localCode, chipRateRef, searchPhases;
+    if(signal==='l2c'){
+      const cm = generateL2CMCode(prn); // 10230 chips
+      localCode = new Int8Array(20460); // one full CM/CL combined-chip cycle (20ms)
+      for(let i=0;i<20460;i++) localCode[i] = (i%2===0) ? cm[(i>>1)%10230] : 0; // CM-only matched filter, CL slots contribute 0
+      chipRateRef = 1.023e6; searchPhases = 1023; // restricted range, see note above
+    } else {
+      localCode = generateCACode(prn); // 1023 chips
+      chipRateRef = 1.023e6; searchPhases = 1023;
+    }
+    const codeLen = localCode.length;
+    const numPhases = searchPhases;
+    const phaseStep = 1;
+    const dopplerRange = 4000;
+    const dopplerBins = [];
+    for(let d=-dopplerRange; d<=dopplerRange; d+=500) dopplerBins.push(d);
+    const powerGrid = new Float32Array(dopplerBins.length*numPhases);
+
+    let biIdx = 0;
+    function processBin(){
+      const dHz = dopplerBins[biIdx];
+      const wI = new Float32Array(blockLen), wQ = new Float32Array(blockLen);
+      for(let b=0; b<numBlocks; b++){
+        const blockStart = b*blockLen;
+        for(let k=0;k<blockLen;k++){
+          const n = blockStart+k;
+          const t = n/effFs;
+          const ph = -2*Math.PI*dHz*t;
+          const c = Math.cos(ph), sn = Math.sin(ph);
+          wI[k] = iArr[n]*c - qArr[n]*sn;
+          wQ[k] = iArr[n]*sn + qArr[n]*c;
+        }
+        for(let pIdx=0; pIdx<numPhases; pIdx++){
+          const ph2 = pIdx*phaseStep;
+          let sI=0, sQ=0;
+          for(let k=0;k<blockLen;k++){
+            const chipIdx = Math.floor(k*(chipRateRef/effFs) + ph2) % codeLen;
+            const cv = localCode[chipIdx];
+            sI += wI[k]*cv;
+            sQ += wQ[k]*cv;
+          }
+          powerGrid[biIdx*numPhases+pIdx] += sI*sI+sQ*sQ;
+        }
+      }
+      biIdx++;
+      const pct = Math.floor(100*biIdx/dopplerBins.length);
+      self.postMessage({type:'corrProgress', pct});
+      if(biIdx < dopplerBins.length){
+        setTimeout(processBin, 0);
+      } else {
+        finish();
+      }
+    }
+    function finish(){
+      let peakVal=-1, peakBin=0, peakIdx=0;
+      for(let bi=0; bi<dopplerBins.length; bi++){
+        for(let pIdx=0; pIdx<numPhases; pIdx++){
+          const v = powerGrid[bi*numPhases+pIdx];
+          if(v>peakVal){ peakVal=v; peakBin=bi; peakIdx=pIdx; }
+        }
+      }
+      let sum=0; for(let i=0;i<powerGrid.length;i++) sum+=powerGrid[i];
+      const meanVal = sum/powerGrid.length;
+      const snrDb = 10*Math.log10(peakVal/meanVal);
+      self.postMessage({
+        type:'corrDone', grid: powerGrid.buffer, numBins: dopplerBins.length, numPhases,
+        dopplerBins, peakBin, peakPhase: peakIdx*phaseStep, snrDb, numBlocks, phaseStep, codeLen
+      }, [powerGrid.buffer]);
+    }
+    processBin();
+  } catch(err){
+    self.postMessage({type:'corrError', message: (err&&err.message)?err.message:String(err)});
+  }
+}
+
 self.onmessage = function(e){
   const msg = e.data;
+  if(msg.type === 'correlate'){ runCorrelate(msg); return; }
   if(msg.type !== 'generate') return;
   try {
     const signal = msg.signal, fs = msg.fs, dur = msg.dur, noiseLevel = msg.noiseLevel;
@@ -1452,14 +1544,14 @@ $('genBtn').onclick = () => {
   genWorker.postMessage({ type:'generate', signal, fs, dur, noiseLevel, bwHz, agcOn, qbits, sats: satsPayload });
 };
 
-// ---------- Phase 5: correlator / acquisition proof (on-demand, main thread, chunked) ----------
+// ---------- Phase 7: correlator / acquisition proof (Worker-based) ----------
 function updateCorrelatorSatOptions(){
   const sel = $('corrPrn');
   sel.innerHTML = '';
-  if(!lastGeneration || lastGeneration.signal !== 'l1ca'){
+  if(!lastGeneration || lastGeneration.signal === 'l5'){
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = lastGeneration ? 'Correlator supports L1 C/A only — regenerate with L1 C/A' : 'Generate a recording first';
+    opt.textContent = lastGeneration ? 'Correlator supports L1 C/A and L2C only (L5\u2019s 10.23 Mcps codes make full-resolution search impractical without an FFT-based approach)' : 'Generate a recording first';
     sel.appendChild(opt);
     $('corrBtn').disabled = true;
     return;
@@ -1472,28 +1564,40 @@ function updateCorrelatorSatOptions(){
   $('corrBtn').disabled = lastGeneration.sats.length===0;
 }
 
+let corrWorker = null;
+
 $('corrBtn').onclick = () => {
-  if(!lastGeneration || lastGeneration.signal!=='l1ca') return;
+  if(!lastGeneration || lastGeneration.signal==='l5') return;
   const prn = parseInt($('corrPrn').value,10);
   const satTruth = lastGeneration.sats.find(s=>s.prn===prn);
   if(!satTruth) return;
+  const signal = lastGeneration.signal;
 
   const fs = lastGeneration.fs;
   const view = new DataView(lastGeneration.wavBuffer);
   const dataStart = 44;
   const totalSamplesAvail = (lastGeneration.wavBuffer.byteLength-44)/4; // 2 channels x 2 bytes
 
-  // Decimate to a fixed ~2.046 MHz-equivalent stream so correlator runtime
-  // stays bounded regardless of the recording's actual sample rate.
+  // Decimate to a ~2.046 MHz-equivalent stream so correlator runtime stays
+  // bounded. Full-resolution (1-chip step) phase search is used throughout
+  // -- PRN autocorrelation is only ~1 chip wide, so anything coarser
+  // essentially never detects the real peak (confirmed by testing).
   const targetFs = 2046000;
   const stride = Math.max(1, Math.round(fs/targetFs));
   const effFs = fs/stride;
-  const effSamplesPerMs = effFs/1000;
-  const availMs = Math.floor((totalSamplesAvail/stride)/effSamplesPerMs);
-  const numBlocks = Math.min(20, availMs);
+  // Block = 1ms coherent sub-integration for both signals. A full 20ms CM
+  // code period as one coherent block was tested and found far too
+  // sensitive to Doppler mismatch at this search grid's 500Hz resolution
+  // (longer coherent windows need proportionally finer Doppler steps) --
+  // 1ms blocks keep Doppler tolerance matched to the 500Hz grid, with more
+  // non-coherent blocks recovering the SNR instead.
+  const blockLen = Math.round(effFs*0.001);
+  const maxBlocks = 20;
+  const availBlocks = Math.floor((totalSamplesAvail/stride)/blockLen);
+  const numBlocks = Math.min(maxBlocks, availBlocks);
   if(numBlocks < 1){ setStatus('corrStatus','Recording too short for correlation.','err'); return; }
 
-  const winLen = Math.floor(numBlocks*effSamplesPerMs);
+  const winLen = numBlocks*blockLen;
   const iArr = new Float32Array(winLen), qArr = new Float32Array(winLen);
   for(let n=0;n<winLen;n++){
     const srcIdx = n*stride;
@@ -1501,85 +1605,54 @@ $('corrBtn').onclick = () => {
     qArr[n] = view.getInt16(dataStart + srcIdx*4 + 2, true);
   }
 
-  const localCode = generateCACode(prn); // ±1, length 1023
-
-  const dopplerBins = [];
-  for(let d=-4000; d<=4000; d+=500) dopplerBins.push(d);
-  const numPhases = 1023;
-  const blockLen = Math.round(effSamplesPerMs);
-  const powerGrid = new Float32Array(dopplerBins.length*numPhases);
-
   $('corrBtn').disabled = true;
   $('corrCanvas').style.display='none';
   $('corrResult').innerHTML = '';
-  setStatus('corrStatus','Running acquisition search...');
+  setStatus('corrStatus','Running acquisition search in worker...');
   $('corrProgressBar').style.width='0%';
 
-  let biIdx = 0;
-  function processBin(){
-    const dHz = dopplerBins[biIdx];
-    const wI = new Float32Array(blockLen), wQ = new Float32Array(blockLen);
-    for(let b=0; b<numBlocks; b++){
-      const blockStart = b*blockLen;
-      for(let k=0;k<blockLen;k++){
-        const n = blockStart+k;
-        const t = n/effFs;
-        const ph = -2*Math.PI*dHz*t;
-        const c = Math.cos(ph), sn = Math.sin(ph);
-        wI[k] = iArr[n]*c - qArr[n]*sn;
-        wQ[k] = iArr[n]*sn + qArr[n]*c;
-      }
-      for(let ph2=0; ph2<numPhases; ph2++){
-        let sI=0, sQ=0;
-        for(let k=0;k<blockLen;k++){
-          const chipIdx = Math.floor(k*(1.023e6/effFs) + ph2) % 1023;
-          const cv = localCode[chipIdx];
-          sI += wI[k]*cv;
-          sQ += wQ[k]*cv;
-        }
-        powerGrid[biIdx*numPhases+ph2] += sI*sI+sQ*sQ;
-      }
-    }
-    biIdx++;
-    const pct = Math.floor(100*biIdx/dopplerBins.length);
-    $('corrProgressBar').style.width = pct+'%';
-    setStatus('corrStatus','Running acquisition search... '+pct+'%');
-    if(biIdx < dopplerBins.length){
-      setTimeout(processBin, 0);
-    } else {
-      finishCorrelation();
-    }
-  }
+  if(corrWorker){ corrWorker.terminate(); }
+  const workerBlob = new Blob([WORKER_SRC], {type:'application/javascript'});
+  const workerUrl = URL.createObjectURL(workerBlob);
+  corrWorker = new Worker(workerUrl);
 
-  function finishCorrelation(){
-    let peakVal=-1, peakBin=0, peakPhase=0;
-    for(let bi=0; bi<dopplerBins.length; bi++){
-      for(let ph2=0; ph2<numPhases; ph2++){
-        const v = powerGrid[bi*numPhases+ph2];
-        if(v>peakVal){ peakVal=v; peakBin=bi; peakPhase=ph2; }
-      }
+  corrWorker.onmessage = (e) => {
+    const m = e.data;
+    if(m.type==='corrProgress'){
+      $('corrProgressBar').style.width = m.pct+'%';
+      setStatus('corrStatus','Running acquisition search... '+m.pct+'%');
+    } else if(m.type==='corrDone'){
+      const grid = new Float32Array(m.grid);
+      renderCorrelatorHeatmap(grid, m.numBins, m.numPhases, m.peakBin, m.peakPhase);
+      const peakDoppler = m.dopplerBins[m.peakBin];
+      const sigLabel = signal==='l2c' ? 'L2C (CM, phase range 0-1023)' : 'L1 C/A';
+      $('corrResult').innerHTML =
+        '<div class="note" style="color:var(--phosphor);border-color:var(--phosphor);">'+
+        sigLabel+' — Peak found: Doppler \u2248 '+peakDoppler+' Hz (truth: '+satTruth.dopplerHz.toFixed(0)+' Hz), '+
+        'code phase \u2248 '+m.peakPhase+' chips (truth: '+satTruth.codePhase0.toFixed(1)+' chips), '+
+        'peak/mean \u2248 '+m.snrDb.toFixed(1)+' dB above the noise floor \u2014 recovered from '+m.numBlocks+' coherent block(s) of non-coherent integration.'+
+        '</div>';
+      setStatus('corrStatus','Done.','ok');
+      $('corrBtn').disabled = false;
+      URL.revokeObjectURL(workerUrl);
+    } else if(m.type==='corrError'){
+      setStatus('corrStatus','Worker error: '+m.message,'err');
+      $('corrBtn').disabled = false;
+      URL.revokeObjectURL(workerUrl);
     }
-    const peakDoppler = dopplerBins[peakBin];
-    let sum=0; for(let i=0;i<powerGrid.length;i++) sum+=powerGrid[i];
-    const meanVal = sum/powerGrid.length;
-    const snrDb = 10*Math.log10(peakVal/meanVal);
-
-    renderCorrelatorHeatmap(powerGrid, dopplerBins.length, numPhases, peakBin, peakPhase);
-
-    $('corrResult').innerHTML =
-      '<div class="note" style="color:var(--phosphor);border-color:var(--phosphor);">'+
-      'Peak found: Doppler \u2248 '+peakDoppler+' Hz (truth: '+satTruth.dopplerHz.toFixed(0)+' Hz), '+
-      'code phase \u2248 '+peakPhase+' chips (truth: '+satTruth.codePhase0.toFixed(1)+' chips), '+
-      'peak/mean \u2248 '+snrDb.toFixed(1)+' dB above the noise floor \u2014 recovered from '+numBlocks+'ms of non-coherent integration.'+
-      '</div>';
-    setStatus('corrStatus','Done.','ok');
+  };
+  corrWorker.onerror = (err) => {
+    setStatus('corrStatus','Worker error: '+err.message,'err');
     $('corrBtn').disabled = false;
-  }
+  };
 
-  processBin();
+  corrWorker.postMessage(
+    { type:'correlate', signal, prn, effFs, iArr: iArr.buffer, qArr: qArr.buffer, blockLen, numBlocks },
+    [iArr.buffer, qArr.buffer]
+  );
 };
 
-function renderCorrelatorHeatmap(grid, numBins, numPhases, peakBin, peakPhase){
+function renderCorrelatorHeatmap(grid, numBins, numPhases, peakBin, peakIdx){
   const cv = $('corrCanvas');
   cv.style.display='block';
   const ctx = cv.getContext('2d');
@@ -1596,7 +1669,7 @@ function renderCorrelatorHeatmap(grid, numBins, numPhases, peakBin, peakPhase){
     }
   }
   ctx.strokeStyle = '#ff5d5d'; ctx.lineWidth=2;
-  ctx.strokeRect(peakPhase*cellW-3, (numBins-1-peakBin)*cellH-3, cellW+6, cellH+6);
+  ctx.strokeRect(peakIdx*cellW-3, (numBins-1-peakBin)*cellH-3, cellW+6, cellH+6);
 }
 
 updateSizeEstimate();

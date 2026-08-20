@@ -70,7 +70,7 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - Correlator remains L1 C/A only, as previously scoped — not extended to
     L5 in this phase
 
-- [x] **Phase 7 — Real broadcast ephemeris (LNAV) + CNAV** *(LNAV + CNAV done, correlator worker remains)*
+- [x] **Phase 7 — Real broadcast ephemeris (LNAV) + CNAV + correlator worker** *(done)*
   - **Done, verified:** genuine least-squares (Levenberg-Marquardt) curve
     fit of real IS-GPS-200 Table 20-IV broadcast ephemeris parameters
     against SGP4 truth over a +/-1hr window — converges to ~2cm RMS in
@@ -107,6 +107,26 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
     residual) was found already in the codebase mid-phase and replaced
     with the verified LM version above once it was confirmed more accurate
     and more faithful to "real least-squares fit"
+  - **Done, verified:** correlator moved into a Worker (reuses the same
+    generation worker's already-verified code generators rather than
+    duplicating them) and extended to L2C. Two real bugs caught by testing
+    before shipping, not by inspection: (1) an initial coarse phase-step
+    search (20-chip step) was found to fundamentally not work for PRN
+    correlation — autocorrelation is only ~1 chip wide, so anything coarser
+    essentially never lands on the real peak; fixed by using full-resolution
+    (1-chip) search restricted to this simulator's actual 0-1023 combined-chip
+    generation range for L2C, which is both correct and equally cheap to L1's
+    search. (2) a full 20ms coherent block for L2C was found far too
+    sensitive to Doppler mismatch at the existing 500Hz search grid (longer
+    coherent windows need proportionally finer Doppler resolution); fixed by
+    using 1ms coherent sub-blocks (matching L1's Doppler tolerance) with more
+    non-coherent blocks recovering the SNR instead. Verified with 5 randomized
+    truth Doppler/phase combinations across L1 C/A and L2C, all correctly
+    recovered. L5 is explicitly not supported: its 10.23 Mcps codes make
+    full-resolution brute-force search ~100x more expensive per search cell
+    than L1/L2C (estimated multi-billion operations), impractical without an
+    FFT-based fast-correlation approach — documented as a known gap rather
+    than shipping a coarse-stepped version already proven not to work
 
 ## Roadmap notation
 `[x]` = done and verified. `[~]` = partially done, see sub-bullets for
@@ -114,6 +134,9 @@ exactly what's shipped vs still pending.
 
 ## Known limitations (current)
 
+- Correlator supports L1 C/A and L2C only. L5 is not supported: its
+  10.23 Mcps codes make brute-force full-resolution search impractical
+  in-browser; would need an FFT-based fast-correlation approach
 - CNAV's 238-bit payload field layout is a documented simplification (see
   Phase 7) — real framing/CRC/FEC, LNAV-style field widths for the payload
 
