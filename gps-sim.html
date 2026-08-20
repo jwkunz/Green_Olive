@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPS Sky &amp; Signal Simulator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.3/satellite.min.js" integrity="sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==" crossorigin="anonymous"></script>
+<style>
+  :root{
+    --bg:#070b0e;
+    --panel:#0d1418;
+    --panel-line:#1b2b2e;
+    --phosphor:#3dffa0;
+    --phosphor-dim:#1f8a58;
+    --amber:#ffb454;
+    --cyan:#5ecbff;
+    --red:#ff5d5d;
+    --text:#c9e8db;
+    --text-dim:#5f8577;
+    --mono: "IBM Plex Mono","JetBrains Mono",ui-monospace,"SF Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--mono);}
+  body{padding:18px;max-width:900px;margin:0 auto;}
+  .scanline{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--phosphor),transparent);opacity:.35;animation:sweep 6s linear infinite;pointer-events:none;}
+  @keyframes sweep{0%{transform:translateY(0);}100%{transform:translateY(100vh);}}
+  header{border-bottom:1px solid var(--panel-line);padding-bottom:14px;margin-bottom:18px;}
+  h1{font-size:1.15rem;letter-spacing:.14em;text-transform:uppercase;color:var(--phosphor);margin:0 0 4px 0;font-weight:600;}
+  .sub{color:var(--text-dim);font-size:.78rem;letter-spacing:.04em;}
+  .panel{background:var(--panel);border:1px solid var(--panel-line);border-radius:2px;padding:14px 16px;margin-bottom:14px;}
+  .panel-title{color:var(--cyan);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+  .panel-title .dot{width:6px;height:6px;border-radius:50%;background:var(--phosphor);box-shadow:0 0 6px var(--phosphor);}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:10px;}
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field label{font-size:.68rem;color:var(--text-dim);letter-spacing:.06em;text-transform:uppercase;}
+  input,select,textarea{background:#0a1114;border:1px solid var(--panel-line);color:var(--text);font-family:var(--mono);padding:7px 8px;border-radius:2px;font-size:.82rem;}
+  input:focus,select:focus,textarea:focus{outline:1px solid var(--phosphor);border-color:var(--phosphor);}
+  input[type="number"]{width:90px;}
+  button{background:transparent;border:1px solid var(--phosphor-dim);color:var(--phosphor);font-family:var(--mono);padding:8px 14px;border-radius:2px;cursor:pointer;font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;transition:all .15s;}
+  button:hover:not(:disabled){background:var(--phosphor);color:#04140c;box-shadow:0 0 10px rgba(61,255,160,.4);}
+  button:disabled{opacity:.35;cursor:not-allowed;}
+  button.secondary{border-color:var(--panel-line);color:var(--text-dim);}
+  .status{font-size:.76rem;color:var(--text-dim);margin-top:6px;min-height:1.1em;}
+  .status.ok{color:var(--phosphor);}
+  .status.err{color:var(--red);}
+  .status.warn{color:var(--amber);}
+  #skywrap{display:flex;gap:16px;flex-wrap:wrap;}
+  #skycanvas{background:#050908;border:1px solid var(--panel-line);border-radius:50%;}
+  table{border-collapse:collapse;font-size:.78rem;flex:1;min-width:220px;}
+  th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--panel-line);}
+  th{color:var(--text-dim);font-weight:500;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;}
+  td.prn{color:var(--phosphor);}
+  .progresswrap{width:100%;height:6px;background:#0a1114;border:1px solid var(--panel-line);border-radius:3px;overflow:hidden;margin-top:8px;}
+  .progressbar{height:100%;width:0%;background:var(--phosphor);box-shadow:0 0 8px var(--phosphor);transition:width .1s linear;}
+  a.dl{color:var(--cyan);text-decoration:none;border-bottom:1px dashed var(--cyan);}
+  a.dl:hover{color:var(--phosphor);border-color:var(--phosphor);}
+  .note{font-size:.72rem;color:var(--text-dim);border-left:2px solid var(--panel-line);padding-left:10px;margin-top:10px;line-height:1.5;}
+  .note.warn{border-color:var(--amber);color:var(--amber);}
+  textarea{width:100%;height:80px;font-size:.7rem;}
+  .estimate{font-size:.74rem;color:var(--cyan);margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+<header>
+  <h1>▲ GPS Sky &amp; Signal Simulator</h1>
+  <div class="sub">simulated constellation view + synthetic L1 C/A baseband IQ recording — offline test-data only, not for transmission</div>
+</header>
+
+<!-- LOCATION & TIME -->
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>1. Observer position &amp; time</div>
+  <div class="row">
+    <div class="field"><label>Latitude</label><input id="lat" type="number" step="0.0001" value="37.7749"></div>
+    <div class="field"><label>Longitude</label><input id="lon" type="number" step="0.0001" value="-122.4194"></div>
+    <div class="field"><label>Height (m)</label><input id="hgt" type="number" step="1" value="30"></div>
+    <div class="field"><button id="geoBtn" class="secondary">Use my location</button></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>Date / time (local)</label><input id="dt" type="datetime-local"></div>
+    <div class="field"><button id="nowBtn" class="secondary">Now</button></div>
+  </div>
+  <div class="row">
+    <div class="field"><button id="almanacBtn">Fetch live almanac</button></div>
+  </div>
+  <div id="almanacStatus" class="status">No almanac loaded yet.</div>
+  <div class="note" id="manualNote" style="display:none;">
+    Live fetch failed (likely a CORS/network restriction in this browser). Paste GPS TLE text below (from
+    <a class="dl" href="https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle" target="_blank" rel="noopener">celestrak.org GPS-ops TLE</a>) and click "Use pasted data".
+    <br><textarea id="manualTle" placeholder="GPS BIIR-2  (PRN 13)&#10;1 24876U ...&#10;2 24876  ..."></textarea>
+    <button id="manualBtn" class="secondary" style="margin-top:6px;">Use pasted data</button>
+  </div>
+</div>
+
+<!-- SKY VIEW -->
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>2. Satellites overhead</div>
+  <div class="row"><button id="computeBtn" disabled>Compute sky view</button></div>
+  <div id="skywrap" style="display:none;">
+    <canvas id="skycanvas" width="320" height="320"></canvas>
+    <table id="satTable">
+      <thead><tr><th>PRN</th><th>Az°</th><th>El°</th><th>Range km</th><th>Doppler Hz</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div id="skyStatus" class="status"></div>
+</div>
+
+<!-- IQ RECORDING -->
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>3. Simulated IQ recording (.wav)</div>
+  <div class="row">
+    <div class="field"><label>Sample rate</label>
+      <select id="fs">
+        <option value="2046000">2.046 MHz (compact)</option>
+        <option value="4092000">4.092 MHz</option>
+        <option value="5115000">5.115 MHz</option>
+      </select>
+    </div>
+    <div class="field"><label>Duration (sec)</label><input id="dur" type="number" step="0.1" min="0.1" max="10" value="1"></div>
+    <div class="field"><label>Noise floor</label>
+      <select id="noise"><option value="0.6">Realistic (weak signal)</option><option value="0.15">Low noise (easy to see)</option></select>
+    </div>
+  </div>
+  <div class="estimate" id="sizeEstimate"></div>
+  <div class="note warn">Real GPS C/A signal power sits well below the noise floor — this sim keeps that ratio, so satellites won't be visible in a raw time-domain plot without correlation, same as a real receiver.</div>
+  <div class="row" style="margin-top:8px;"><button id="genBtn" disabled>Generate WAV</button></div>
+  <div class="progresswrap"><div class="progressbar" id="progressBar"></div></div>
+  <div id="genStatus" class="status"></div>
+  <div id="dlWrap"></div>
+</div>
+
+<script>
+// ---------- constants ----------
+const WGS84_A = 6378137.0, WGS84_F = 1/298.257223563;
+const WGS84_E2 = WGS84_F*(2-WGS84_F);
+const GM = 3.986005e14;      // GPS ICD earth gravitational constant
+const OMEGA_E = 7.2921151467e-5; // rad/s
+const C_LIGHT = 299792458;
+const L1_FREQ = 1575.42e6;
+const DEG = Math.PI/180, RAD = 180/Math.PI;
+
+// PRN -> [tap1, tap2] (1-indexed) for the G2 code-phase selector, per ICD-GPS-200
+const PRN_TAPS = {
+  1:[2,6],2:[3,7],3:[4,8],4:[5,9],5:[1,9],6:[2,10],7:[1,8],8:[2,9],9:[3,10],10:[2,3],
+  11:[3,4],12:[5,6],13:[6,7],14:[7,8],15:[8,9],16:[9,10],17:[1,4],18:[2,5],19:[3,6],20:[4,7],
+  21:[5,8],22:[6,9],23:[1,3],24:[4,6],25:[5,7],26:[6,8],27:[7,9],28:[8,10],29:[1,6],30:[2,7],
+  31:[3,8],32:[4,9]
+};
+
+let satellites = []; // parsed TLE elements
+let visibleSats = []; // computed at chosen time: {prn, az, el, rangeM, dopplerHz, satPosECEF}
+
+// ---------- UI wiring ----------
+const $ = id => document.getElementById(id);
+function setNowDefault(){
+  const now = new Date();
+  now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  $('dt').value = now.toISOString().slice(0,16);
+}
+setNowDefault();
+$('nowBtn').onclick = setNowDefault;
+
+$('geoBtn').onclick = () => {
+  if(!navigator.geolocation){ setStatus('almanacStatus','Geolocation not available in this browser.','err'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    $('lat').value = pos.coords.latitude.toFixed(5);
+    $('lon').value = pos.coords.longitude.toFixed(5);
+  }, err=>{ setStatus('almanacStatus','Location permission denied.','err'); });
+};
+
+function setStatus(id,msg,cls){
+  const el = $(id);
+  el.textContent = msg;
+  el.className = 'status' + (cls?(' '+cls):'');
+}
+
+// ---------- TLE fetch & parse ----------
+$('almanacBtn').onclick = async () => {
+  setStatus('almanacStatus','Fetching live GPS almanac from celestrak.org ...');
+  $('manualNote').style.display='none';
+  try{
+    const url = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle';
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const text = await resp.text();
+    parseTleBlock(text);
+  }catch(e){
+    setStatus('almanacStatus','Live fetch blocked: '+e.message,'err');
+    $('manualNote').style.display='block';
+  }
+};
+
+$('manualBtn').onclick = () => {
+  const text = $('manualTle').value;
+  if(!text.trim()){ setStatus('almanacStatus','Paste TLE text first.','err'); return; }
+  parseTleBlock(text);
+};
+
+function parseTleBlock(text){
+  if(typeof satellite === 'undefined'){
+    setStatus('almanacStatus','satellite.js failed to load from CDN (check network/ad-blocker).','err');
+    return;
+  }
+  const lines = text.split('\n').map(l=>l.replace('\r','')).filter(l=>l.trim().length>0);
+  const sats = [];
+  for(let i=0;i<lines.length-1;i++){
+    if(lines[i].startsWith('1 ') && lines[i+1] && lines[i+1].startsWith('2 ')){
+      const l1 = lines[i], l2 = lines[i+1];
+      let name = 'PRN?';
+      if(i>0 && !lines[i-1].startsWith('1 ') && !lines[i-1].startsWith('2 ')) name = lines[i-1].trim();
+      try{
+        const satrec = satellite.twoline2satrec(l1, l2);
+        if(!satrec) continue;
+        let prnMatch = name.match(/PRN\s*(\d+)/i);
+        const noradId = parseInt(l1.substring(2,7),10);
+        const prn = prnMatch ? parseInt(prnMatch[1],10) : noradId;
+        sats.push({name, prn, satrec});
+      }catch(err){ /* skip malformed entry */ }
+    }
+  }
+  if(sats.length===0){ setStatus('almanacStatus','No valid TLE entries found in that data.','err'); return; }
+  satellites = sats;
+  setStatus('almanacStatus', 'Loaded '+sats.length+' GPS satellites (SGP4/SDP4 via satellite.js). Ready to compute sky view.', 'ok');
+  $('computeBtn').disabled = false;
+}
+
+// ---------- orbit propagation (full SGP4/SDP4 via satellite.js — handles GPS's ~12h deep-space regime) ----------
+function satEcefPosition(sat, date){
+  const pv = satellite.propagate(sat.satrec, date);
+  if(!pv || !pv.position) return null; // propagation error (e.g. decayed/invalid elements)
+  const gmst = satellite.gstime(date);
+  const ecf = satellite.eciToEcf(pv.position, gmst); // km
+  return { x: ecf.x*1000, y: ecf.y*1000, z: ecf.z*1000 }; // meters
+}
+
+function geodeticToEcef(latDeg, lonDeg, h){
+  const lat = latDeg*DEG, lon = lonDeg*DEG;
+  const sinLat = Math.sin(lat), cosLat = Math.cos(lat);
+  const N = WGS84_A/Math.sqrt(1 - WGS84_E2*sinLat*sinLat);
+  return {
+    x: (N+h)*cosLat*Math.cos(lon),
+    y: (N+h)*cosLat*Math.sin(lon),
+    z: (N*(1-WGS84_E2)+h)*sinLat
+  };
+}
+
+function ecefToAzEl(satEcef, obsEcef, latDeg, lonDeg){
+  const dx = satEcef.x-obsEcef.x, dy = satEcef.y-obsEcef.y, dz = satEcef.z-obsEcef.z;
+  const range = Math.sqrt(dx*dx+dy*dy+dz*dz);
+  const lat = latDeg*DEG, lon = lonDeg*DEG;
+  const sinLat=Math.sin(lat), cosLat=Math.cos(lat), sinLon=Math.sin(lon), cosLon=Math.cos(lon);
+  const e = -sinLon*dx + cosLon*dy;
+  const n = -sinLat*cosLon*dx - sinLat*sinLon*dy + cosLat*dz;
+  const u = cosLat*cosLon*dx + cosLat*sinLon*dy + sinLat*dz;
+  const az = (Math.atan2(e,n)*RAD + 360)%360;
+  const el = Math.asin(u/range)*RAD;
+  return {az, el, range};
+}
+
+// ---------- compute sky view ----------
+$('computeBtn').onclick = () => {
+  const latDeg = parseFloat($('lat').value), lonDeg = parseFloat($('lon').value), hgt = parseFloat($('hgt').value)||0;
+  const date = new Date($('dt').value);
+  if(isNaN(date.getTime())){ setStatus('skyStatus','Pick a valid date/time.','err'); return; }
+
+  const obsEcef = geodeticToEcef(latDeg, lonDeg, hgt);
+  const results = [];
+  for(const sat of satellites){
+    const ecef = satEcefPosition(sat, date);
+    if(!ecef) continue; // propagation failed for this element set
+    const {az, el, range} = ecefToAzEl(ecef, obsEcef, latDeg, lonDeg);
+    if(el > 5){ // above horizon-ish mask
+      // velocity via finite difference for doppler
+      const dtSec = 1;
+      const laterDate = new Date(date.getTime()+dtSec*1000);
+      const ecef2 = satEcefPosition(sat, laterDate);
+      if(!ecef2){ continue; }
+      const rangeLater = Math.sqrt((ecef2.x-obsEcef.x)**2+(ecef2.y-obsEcef.y)**2+(ecef2.z-obsEcef.z)**2);
+      const rangeRate = (rangeLater-range)/dtSec; // m/s, positive = receding
+      const dopplerHz = -rangeRate/C_LIGHT*L1_FREQ;
+      results.push({prn:sat.prn, az, el, range, dopplerHz, ecef});
+    }
+  }
+  results.sort((a,b)=>b.el-a.el);
+  visibleSats = results;
+  renderSkyPlot(results);
+  renderSatTable(results);
+  $('skywrap').style.display = 'flex';
+  setStatus('skyStatus', results.length+' satellites above 5° elevation at selected time.', results.length? 'ok':'warn');
+  $('genBtn').disabled = results.length===0;
+  updateSizeEstimate();
+};
+
+function renderSkyPlot(sats){
+  const cv = $('skycanvas'), ctx = cv.getContext('2d');
+  const cx=160, cy=160, R=140;
+  ctx.clearRect(0,0,320,320);
+  ctx.strokeStyle = '#1b2b2e'; ctx.fillStyle = '#5f8577'; ctx.font='9px monospace';
+  [30,60,90].forEach(el=>{
+    const r = R*(90-el)/90;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,2*Math.PI); ctx.stroke();
+  });
+  ctx.beginPath(); ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy);
+  ctx.moveTo(cx,cy-R); ctx.lineTo(cx,cy+R); ctx.stroke();
+  ctx.fillText('N',cx-4,cy-R+10); ctx.fillText('S',cx-4,cy+R-2);
+  ctx.fillText('E',cx+R-10,cy+4); ctx.fillText('W',cx-R+2,cy+4);
+
+  sats.forEach(s=>{
+    const r = R*(90-s.el)/90;
+    const th = (s.az-90)*DEG; // az=0 is north (up), canvas 0deg is +x(east); rotate
+    const x = cx + r*Math.cos((s.az)*DEG - Math.PI/2);
+    const y = cy + r*Math.sin((s.az)*DEG - Math.PI/2);
+    ctx.beginPath(); ctx.arc(x,y,5,0,2*Math.PI);
+    ctx.fillStyle='#3dffa0'; ctx.shadowColor='#3dffa0'; ctx.shadowBlur=6; ctx.fill(); ctx.shadowBlur=0;
+    ctx.fillStyle='#c9e8db'; ctx.font='10px monospace';
+    ctx.fillText(s.prn, x+7, y-6);
+  });
+}
+
+function renderSatTable(sats){
+  const tbody = $('satTable').querySelector('tbody');
+  tbody.innerHTML = '';
+  sats.forEach(s=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="prn">${s.prn}</td><td>${s.az.toFixed(1)}</td><td>${s.el.toFixed(1)}</td><td>${(s.range/1000).toFixed(0)}</td><td>${s.dopplerHz.toFixed(0)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ---------- GPS C/A code generation ----------
+function generateCACode(prn){
+  const taps = PRN_TAPS[((prn-1)%32)+1];
+  let g1 = new Uint8Array(10).fill(1);
+  let g2 = new Uint8Array(10).fill(1);
+  const code = new Int8Array(1023);
+  for(let i=0;i<1023;i++){
+    const g1out = g1[9];
+    const g2out = g2[taps[0]-1] ^ g2[taps[1]-1];
+    code[i] = (g1out ^ g2out) ? -1 : 1; // map chip bit to BPSK +-1
+    const g1fb = g1[2] ^ g1[9];
+    const g2fb = g2[1]^g2[2]^g2[5]^g2[7]^g2[8]^g2[9];
+    for(let k=9;k>0;k--) g1[k]=g1[k-1];
+    g1[0]=g1fb;
+    for(let k=9;k>0;k--) g2[k]=g2[k-1];
+    g2[0]=g2fb;
+  }
+  return code;
+}
+
+// ---------- size estimate ----------
+function updateSizeEstimate(){
+  const fs = parseInt($('fs').value,10);
+  const dur = parseFloat($('dur').value)||0;
+  const bytes = fs*dur*2*2; // stereo (I/Q), 16-bit
+  const mb = bytes/1e6;
+  $('sizeEstimate').textContent = 'Estimated file size: ~'+mb.toFixed(1)+' MB ('+visibleSats.length+' satellites in view)';
+}
+$('fs').onchange = updateSizeEstimate;
+$('dur').oninput = updateSizeEstimate;
+
+// ---------- WAV IQ generation ----------
+$('genBtn').onclick = async () => {
+  if(visibleSats.length===0){ setStatus('genStatus','Compute a sky view with at least one visible satellite first.','err'); return; }
+  const fs = parseInt($('fs').value,10);
+  let dur = parseFloat($('dur').value);
+  if(dur>10){ dur=10; $('dur').value=10; }
+  const noiseLevel = parseFloat($('noise').value);
+  const totalSamples = Math.floor(fs*dur);
+
+  $('genBtn').disabled = true;
+  $('dlWrap').innerHTML = '';
+  setStatus('genStatus','Generating baseband IQ...');
+  $('progressBar').style.width='0%';
+
+  // precompute per-satellite CA codes and per-sample doppler/code-phase params
+  const chipRate = 1.023e6;
+  const sats = visibleSats.map(s=>{
+    return {
+      prn: s.prn,
+      code: generateCACode(s.prn),
+      dopplerHz: s.dopplerHz,
+      codePhase0: (s.range % (C_LIGHT/chipRate*1023)) / (C_LIGHT/chipRate), // starting chip offset from pseudorange
+      amp: 1.0,
+      phase0: Math.random()*2*Math.PI
+    };
+  });
+
+  const iData = new Float32Array(totalSamples);
+  const qData = new Float32Array(totalSamples);
+
+  const CHUNK = 200000;
+  let idx = 0;
+
+  function processChunk(){
+    const end = Math.min(idx+CHUNK, totalSamples);
+    for(let n=idx; n<end; n++){
+      const t = n/fs;
+      let accI=0, accQ=0;
+      for(const s of sats){
+        const chipIdx = Math.floor((t*chipRate + s.codePhase0) % 1023);
+        const chipVal = s.code[chipIdx];
+        const ph = 2*Math.PI*s.dopplerHz*t + s.phase0;
+        accI += s.amp*chipVal*Math.cos(ph);
+        accQ += s.amp*chipVal*Math.sin(ph);
+      }
+      // additive noise (uniform-ish complex gaussian approx via sum of two randoms)
+      const nI = (Math.random()+Math.random()+Math.random()-1.5)/1.5*noiseLevel;
+      const nQ = (Math.random()+Math.random()+Math.random()-1.5)/1.5*noiseLevel;
+      iData[n] = accI/Math.sqrt(sats.length) + nI;
+      qData[n] = accQ/Math.sqrt(sats.length) + nQ;
+    }
+    idx = end;
+    const pct = Math.floor(100*idx/totalSamples);
+    $('progressBar').style.width = pct+'%';
+    setStatus('genStatus','Generating baseband IQ... '+pct+'%');
+    if(idx < totalSamples){
+      setTimeout(processChunk, 0);
+    }else{
+      finalizeWav();
+    }
+  }
+
+  function finalizeWav(){
+    setStatus('genStatus','Encoding WAV file...');
+    // normalize to int16 range
+    let peak = 0;
+    for(let n=0;n<totalSamples;n++){ peak = Math.max(peak, Math.abs(iData[n]), Math.abs(qData[n])); }
+    const scale = peak>0 ? (32767*0.9)/peak : 1;
+
+    const bytesPerSample=2, numChannels=2;
+    const dataSize = totalSamples*numChannels*bytesPerSample;
+    const buffer = new ArrayBuffer(44+dataSize);
+    const view = new DataView(buffer);
+    function writeStr(off,str){ for(let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i)); }
+    writeStr(0,'RIFF'); view.setUint32(4, 36+dataSize, true);
+    writeStr(8,'WAVE'); writeStr(12,'fmt ');
+    view.setUint32(16,16,true); view.setUint16(20,1,true);
+    view.setUint16(22,numChannels,true); view.setUint32(24,fs,true);
+    view.setUint32(28, fs*numChannels*bytesPerSample, true);
+    view.setUint16(32, numChannels*bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeStr(36,'data'); view.setUint32(40, dataSize, true);
+
+    let off=44;
+    for(let n=0;n<totalSamples;n++){
+      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(iData[n]*scale))), true); off+=2;
+      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(qData[n]*scale))), true); off+=2;
+    }
+
+    const blob = new Blob([buffer], {type:'audio/wav'});
+    const url = URL.createObjectURL(blob);
+    const mb = (blob.size/1e6).toFixed(1);
+    $('dlWrap').innerHTML = `<a class="dl" href="${url}" download="gps_sim_iq.wav">⬇ Download gps_sim_iq.wav (${mb} MB, L=I / R=Q, ${fs} Hz, ${sats.length} satellites)</a>`;
+    setStatus('genStatus','Done.','ok');
+    $('genBtn').disabled = false;
+  }
+
+  processChunk();
+};
+
+updateSizeEstimate();
+</script>
+</body>
+</html>
