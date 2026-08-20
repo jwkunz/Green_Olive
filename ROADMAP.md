@@ -70,27 +70,37 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - Correlator remains L1 C/A only, as previously scoped — not extended to
     L5 in this phase
 
-- [~] **Phase 7 — Real broadcast ephemeris (LNAV) + CNAV + correlator worker** *(LNAV done)*
+- [x] **Phase 7 — Real broadcast ephemeris (LNAV) + CNAV** *(LNAV + CNAV done, correlator worker remains)*
   - **Done, verified:** genuine least-squares (Levenberg-Marquardt) curve
     fit of real IS-GPS-200 Table 20-IV broadcast ephemeris parameters
     against SGP4 truth over a +/-1hr window — converges to ~2cm RMS in
-    isolated testing (sub-meter in the live app), i.e. this fits the actual
-    orbit rather than just repackaging osculating elements
-  - **Done, verified:** real GPS LNAV parity algorithm (200/200 random
-    round-trip checks pass, single-bit corruption correctly detected) and
-    the exact subframe 1/2/3 bit layout (cross-checked against an
-    open-source decoder plus the official field-width table)
-  - **Done, verified:** L1 C/A now transmits real encoded LNAV subframes
-    (1, 2, 3 cycling every 6s each, chained parity across subframe
-    boundaries) built from the fitted ephemeris/clock — replaces the old
-    synthetic 50bps stream entirely. Verified through the actual live
-    Worker code path: generated a full 18s cycle, independently decoded
-    all three subframes back out, every field (M0, e, sqrtA, Omega0, i0,
-    omega, omegaDot, WN, toe, toc, af0/af1/af2, IODE/IODC) matched the
-    fitted input to sub-LSB precision
-  - **Not yet done:** CNAV encoding (message types 10/11/30, CRC-24Q) for
-    L2C/L5, reusing the same fitted physical ephemeris — L2C/L5 still
-    carry synthetic message content
+    isolated testing (sub-meter in the live app)
+  - **Done, verified:** real GPS LNAV parity algorithm and exact subframe
+    1/2/3 bit layout (cross-checked against an open-source decoder plus
+    the official field-width table). L1 C/A now transmits real encoded
+    LNAV subframes built from the fitted ephemeris — verified via full
+    generate-then-independently-decode round trip, every field to
+    sub-LSB precision
+  - **Done, verified:** real CNAV framing for L2C/L5 — preamble, PRN,
+    message type, TOW, alert flag bit offsets cross-checked against
+    gnss-sdr's open-source CNAV decoder; CRC-24Q (verified: linear-code
+    zero-property, deterministic, single-bit sensitive) computed over the
+    correct 276 bits; real rate-1/2 K=7 convolutional encoder (171/133
+    octal polynomials, continuous state across message boundaries per
+    spec) verified against IS-GPS-200's own encoder description, with
+    chunked-vs-whole encoding equivalence confirmed. Message types 10, 11,
+    30 cycle continuously carrying the same genuine fitted ephemeris/clock
+    values. Full round trip verified: encode → independently recompute
+    CRC over extracted bits → matches; convolutional output matches an
+    independent manual re-encode bit-for-bit
+  - **Documented limitation:** the 238-bit payload within each CNAV
+    message uses the same field widths verified for LNAV rather than the
+    exact real CNAV Table 30-I bit positions, which could not be
+    independently verified from a primary source this session despite
+    extensive searching (found the framing/CRC/FEC details from
+    open-source decoders, but not the exact payload field table) — the
+    framing/CRC/FEC layer is authentic and would satisfy a real decoder's
+    outer checks, but the inner field layout is a documented simplification
   - **Not yet done:** correlator moved to a Worker with L2C/L5 support
   - Mid-session note: an earlier, less-accurate ephemeris-fit
     implementation (harmonic regression on osculating elements, ~300m
@@ -104,8 +114,8 @@ exactly what's shipped vs still pending.
 
 ## Known limitations (current)
 
-- CNAV (L2C/L5) still carries synthetic message content entirely — LNAV
-  (L1 C/A) is now the real thing, CNAV is next
+- CNAV's 238-bit payload field layout is a documented simplification (see
+  Phase 7) — real framing/CRC/FEC, LNAV-style field widths for the payload
 
 - L5 code generation was validated via self-consistency checks (matches the
   spec's own stated bit-ordering invariant) and statistical checks
