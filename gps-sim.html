@@ -99,11 +99,12 @@
   <div id="skywrap" style="display:none;">
     <canvas id="skycanvas" width="320" height="320"></canvas>
     <table id="satTable">
-      <thead><tr><th>PRN</th><th>Az°</th><th>El°</th><th>Range km</th><th>Doppler Hz</th></tr></thead>
+      <thead><tr><th>PRN</th><th>Az°</th><th>El°</th><th>Range km</th><th>Doppler Hz</th><th>Iono m</th><th>Tropo m</th><th>ClkBias m</th><th>Amp</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
   <div id="skyStatus" class="status"></div>
+  <div class="note">Iono/Tropo delays use the Klobuchar model and a simplified tropospheric mapping function; ClkBias is a synthetic per-satellite offset (real clock corrections require the broadcast nav message, not available from TLE data). Amp is the modeled elevation-dependent gain factor applied in the IQ recording.</div>
 </div>
 
 <!-- IQ RECORDING -->
@@ -258,6 +259,58 @@ function ecefToAzEl(satEcef, obsEcef, latDeg, lonDeg){
   return {az, el, range};
 }
 
+// ---------- Phase 2: propagation-delay & power models ----------
+// Example broadcast ionospheric coefficients (typical mid-latitude magnitudes).
+// These are NOT live broadcast values — TLE orbit data doesn't include the
+// nav message, so real alpha/beta coefficients aren't available here.
+const KLOBUCHAR_ALPHA = [1.0245e-08, 2.2352e-08, -5.9605e-08, -1.1921e-07];
+const KLOBUCHAR_BETA  = [9.4208e+04, 6.5536e+04, -1.9661e+05, -6.5536e+04];
+
+function gpsTowSeconds(date){
+  // seconds since GPS week start (Sunday 00:00 UTC). Ignores the ~18s
+  // GPS-UTC leap-second offset, which is negligible for this delay model.
+  return date.getUTCDay()*86400 + date.getUTCHours()*3600 + date.getUTCMinutes()*60 + date.getUTCSeconds() + date.getUTCMilliseconds()/1000;
+}
+
+function klobucharDelaySec(latDeg, lonDeg, azDeg, elDeg, towSec){
+  const latSc = latDeg/180, lonSc = lonDeg/180, elSc = elDeg/180;
+  const azRad = azDeg*DEG;
+  const psi = 0.0137/(elSc+0.11) - 0.022;
+  let phiI = latSc + psi*Math.cos(azRad);
+  phiI = Math.max(-0.416, Math.min(0.416, phiI));
+  const lambdaI = lonSc + psi*Math.sin(azRad)/Math.cos(phiI*Math.PI);
+  const phiM = phiI + 0.064*Math.cos((lambdaI-1.617)*Math.PI);
+  let t = 4.32e4*lambdaI + towSec;
+  t = t % 86400; if(t<0) t += 86400;
+  const F = 1.0 + 16.0*Math.pow(0.53-elSc, 3);
+  let AMP = KLOBUCHAR_ALPHA[0] + phiM*(KLOBUCHAR_ALPHA[1] + phiM*(KLOBUCHAR_ALPHA[2] + phiM*KLOBUCHAR_ALPHA[3]));
+  if(AMP<0) AMP=0;
+  let PER = KLOBUCHAR_BETA[0] + phiM*(KLOBUCHAR_BETA[1] + phiM*(KLOBUCHAR_BETA[2] + phiM*KLOBUCHAR_BETA[3]));
+  if(PER<72000) PER=72000;
+  const x = 2*Math.PI*(t-50400)/PER;
+  return Math.abs(x)<1.57 ? F*(5e-9 + AMP*(1 - x*x/2 + x*x*x*x/24)) : F*5e-9;
+}
+
+// Simplified cosecant-mapping tropospheric delay (~2.3m zenith delay assumption)
+function tropoDelayMeters(elDeg){
+  return 2.3 / Math.sin(Math.sqrt(elDeg*elDeg + 6.25)*DEG);
+}
+
+// Simulated satellite clock bias — real values come from the broadcast nav
+// message (af0/af1/af2), which isn't available from TLE data alone. This
+// generates a deterministic-per-PRN synthetic bias so the effect is visible
+// and reproducible, clearly not a real clock correction.
+function synthClockBiasMeters(prn){
+  const seed = Math.sin(prn*12.9898)*43758.5453;
+  const frac = seed - Math.floor(seed);
+  return (frac-0.5)*2*300; // +/- ~300 m (~1 microsecond-scale bias)
+}
+
+// Approximate combined antenna-gain + low-elevation attenuation factor
+function elevationGainFactor(elDeg){
+  return Math.max(0.15, 0.3 + 0.7*Math.sin(elDeg*DEG));
+}
+
 // ---------- compute sky view ----------
 $('computeBtn').onclick = () => {
   const latDeg = parseFloat($('lat').value), lonDeg = parseFloat($('lon').value), hgt = parseFloat($('hgt').value)||0;
@@ -265,6 +318,7 @@ $('computeBtn').onclick = () => {
   if(isNaN(date.getTime())){ setStatus('skyStatus','Pick a valid date/time.','err'); return; }
 
   const obsEcef = geodeticToEcef(latDeg, lonDeg, hgt);
+  const towSec = gpsTowSeconds(date);
   const results = [];
   for(const sat of satellites){
     const ecef = satEcefPosition(sat, date);
@@ -279,7 +333,14 @@ $('computeBtn').onclick = () => {
       const rangeLater = Math.sqrt((ecef2.x-obsEcef.x)**2+(ecef2.y-obsEcef.y)**2+(ecef2.z-obsEcef.z)**2);
       const rangeRate = (rangeLater-range)/dtSec; // m/s, positive = receding
       const dopplerHz = -rangeRate/C_LIGHT*L1_FREQ;
-      results.push({prn:sat.prn, az, el, range, dopplerHz, ecef});
+
+      const ionoM = klobucharDelaySec(latDeg, lonDeg, az, el, towSec) * C_LIGHT;
+      const tropoM = tropoDelayMeters(el);
+      const clockBiasM = synthClockBiasMeters(sat.prn);
+      const effectiveRange = range + ionoM + tropoM + clockBiasM;
+      const amp = elevationGainFactor(el);
+
+      results.push({prn:sat.prn, az, el, range, effectiveRange, dopplerHz, ecef, ionoM, tropoM, clockBiasM, amp});
     }
   }
   results.sort((a,b)=>b.el-a.el);
@@ -323,7 +384,7 @@ function renderSatTable(sats){
   tbody.innerHTML = '';
   sats.forEach(s=>{
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="prn">${s.prn}</td><td>${s.az.toFixed(1)}</td><td>${s.el.toFixed(1)}</td><td>${(s.range/1000).toFixed(0)}</td><td>${s.dopplerHz.toFixed(0)}</td>`;
+    tr.innerHTML = `<td class="prn">${s.prn}</td><td>${s.az.toFixed(1)}</td><td>${s.el.toFixed(1)}</td><td>${(s.range/1000).toFixed(0)}</td><td>${s.dopplerHz.toFixed(0)}</td><td>${s.ionoM.toFixed(1)}</td><td>${s.tropoM.toFixed(1)}</td><td>${s.clockBiasM.toFixed(0)}</td><td>${s.amp.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   });
 }
@@ -346,6 +407,25 @@ function generateCACode(prn){
     g2[0]=g2fb;
   }
   return code;
+}
+
+// ---------- GPS nav message bits (synthetic 50 bps, real TLM preamble) ----------
+// Real subframes carry ephemeris/clock/almanac words with parity — reproducing
+// that fully needs the actual broadcast nav message, which isn't available
+// from TLE data. This generates a plausible 50 bps bit stream (with the real
+// 10001011 TLM preamble at each 6s subframe boundary) so the C/A code is
+// bit-modulated the way a real signal is, rather than a static repeating code.
+function generateNavBits(prn, durationSec){
+  const numBits = Math.ceil(durationSec*50) + 2;
+  const bits = new Int8Array(numBits);
+  const preamble = [1,0,0,0,1,0,1,1];
+  let seed = (prn*7919 + 12345) >>> 0;
+  function rnd(){ seed = (seed*1103515245 + 12345) >>> 0; return (seed >>> 8) / 0x1000000; }
+  for(let i=0;i<numBits;i++){
+    const posInSubframe = i % 300; // 300 bits = 6s subframe
+    bits[i] = (posInSubframe < 8) ? (preamble[posInSubframe] ? 1 : -1) : (rnd()<0.5 ? 1 : -1);
+  }
+  return bits;
 }
 
 // ---------- size estimate ----------
@@ -379,9 +459,10 @@ $('genBtn').onclick = async () => {
     return {
       prn: s.prn,
       code: generateCACode(s.prn),
+      navBits: generateNavBits(s.prn, dur),
       dopplerHz: s.dopplerHz,
-      codePhase0: (s.range % (C_LIGHT/chipRate*1023)) / (C_LIGHT/chipRate), // starting chip offset from pseudorange
-      amp: 1.0,
+      codePhase0: (s.effectiveRange % (C_LIGHT/chipRate*1023)) / (C_LIGHT/chipRate), // starting chip offset from pseudorange incl. iono/tropo/clock delay
+      amp: s.amp,
       phase0: Math.random()*2*Math.PI
     };
   });
@@ -400,9 +481,11 @@ $('genBtn').onclick = async () => {
       for(const s of sats){
         const chipIdx = Math.floor((t*chipRate + s.codePhase0) % 1023);
         const chipVal = s.code[chipIdx];
+        const bitIdx = Math.min(s.navBits.length-1, Math.floor(t*50));
+        const navVal = s.navBits[bitIdx];
         const ph = 2*Math.PI*s.dopplerHz*t + s.phase0;
-        accI += s.amp*chipVal*Math.cos(ph);
-        accQ += s.amp*chipVal*Math.sin(ph);
+        accI += s.amp*chipVal*navVal*Math.cos(ph);
+        accQ += s.amp*chipVal*navVal*Math.sin(ph);
       }
       // additive noise (uniform-ish complex gaussian approx via sum of two randoms)
       const nI = (Math.random()+Math.random()+Math.random()-1.5)/1.5*noiseLevel;

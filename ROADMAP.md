@@ -9,7 +9,7 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
     "deep-space" regime where lunar/solar resonance terms are needed
   - Future option: RINEX broadcast ephemeris support for higher precision
 
-- [ ] **Phase 2 — Signal realism**
+- [x] **Phase 2 — Signal realism** *(done)*
   - 50 bps navigation message bits modulated onto the C/A code
   - Elevation-dependent signal power (weaker near horizon)
   - Ionospheric/tropospheric delay (Klobuchar model)
@@ -32,8 +32,13 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
 
 ## Known limitations (current)
 
-- No navigation message bit modulation yet (raw repeating C/A code only)
-- No atmospheric delay or clock bias modeling yet
+- Nav message bits are a synthetic 50 bps stream with the real TLM preamble,
+  not decoded/re-encoded real subframes (ephemeris/clock/almanac words) —
+  that requires the actual broadcast nav message, unavailable from TLE data
+- Klobuchar ionospheric coefficients are plausible example values, not live
+  broadcast alpha/beta — same reason
+- Satellite clock bias is a synthetic deterministic-per-PRN offset, not a
+  real af0/af1/af2 correction
 - App depends on one CDN script (`satellite.js` from cdnjs) rather than
   being fully offline-capable; can be vendored in later if that matters
 - Not for RF transmission — this generates test/simulation data files only
