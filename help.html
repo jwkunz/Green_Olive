@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Help &amp; Documentation — GPS Sky &amp; Signal Simulator</title>
+<style>
+  :root{
+    --bg:#070b0e;
+    --panel:#0d1418;
+    --panel-line:#1b2b2e;
+    --phosphor:#3dffa0;
+    --phosphor-dim:#1f8a58;
+    --amber:#ffb454;
+    --cyan:#5ecbff;
+    --red:#ff5d5d;
+    --text:#c9e8db;
+    --text-dim:#5f8577;
+    --mono: "IBM Plex Mono","JetBrains Mono",ui-monospace,"SF Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--mono);}
+  body{padding:18px;max-width:900px;margin:0 auto;line-height:1.6;}
+  header{border-bottom:1px solid var(--panel-line);padding-bottom:14px;margin-bottom:20px;}
+  h1{font-size:1.15rem;letter-spacing:.14em;text-transform:uppercase;color:var(--phosphor);margin:0 0 4px 0;font-weight:600;}
+  .sub{color:var(--text-dim);font-size:.78rem;letter-spacing:.04em;}
+  .sub a{color:var(--cyan);text-decoration:none;border-bottom:1px dashed var(--cyan);}
+  .sub a:hover{color:var(--phosphor);border-color:var(--phosphor);}
+  .panel{background:var(--panel);border:1px solid var(--panel-line);border-radius:2px;padding:16px 18px;margin-bottom:14px;}
+  .panel-title{color:var(--cyan);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+  .panel-title .dot{width:6px;height:6px;border-radius:50%;background:var(--phosphor);box-shadow:0 0 6px var(--phosphor);}
+  h3{color:var(--amber);font-size:.85rem;letter-spacing:.04em;margin:16px 0 6px 0;}
+  h3:first-child{margin-top:0;}
+  p{font-size:.85rem;margin:6px 0;}
+  ul,ol{font-size:.85rem;margin:6px 0;padding-left:22px;}
+  li{margin:4px 0;}
+  code{background:#0a1114;border:1px solid var(--panel-line);padding:1px 5px;border-radius:2px;color:var(--phosphor);font-size:.82em;}
+  pre{background:#0a1114;border:1px solid var(--panel-line);border-radius:2px;padding:12px;overflow-x:auto;font-size:.76rem;color:var(--text-dim);white-space:pre-wrap;}
+  table{border-collapse:collapse;width:100%;font-size:.8rem;margin:8px 0;}
+  th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--panel-line);}
+  th{color:var(--text-dim);font-weight:500;font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;}
+  td.prn{color:var(--phosphor);}
+  .note{font-size:.78rem;color:var(--text-dim);border-left:2px solid var(--panel-line);padding-left:10px;margin:10px 0;}
+  .note.warn{border-color:var(--amber);color:var(--amber);}
+  .badge{display:inline-block;background:#0a1114;border:1px solid var(--phosphor-dim);color:var(--phosphor);font-size:.68rem;padding:2px 8px;border-radius:10px;letter-spacing:.04em;}
+  a.back{color:var(--cyan);text-decoration:none;font-size:.8rem;}
+  a.back:hover{color:var(--phosphor);}
+  footer{margin-top:24px;padding-top:14px;border-top:1px solid var(--panel-line);color:var(--text-dim);font-size:.72rem;}
+</style>
+</head>
+<body>
+<header>
+  <h1>▲ Help &amp; Documentation</h1>
+  <div class="sub">GPS Sky &amp; Signal Simulator <span class="badge" id="verBadge">v1.0.0</span> · <a href="gps-sim.html">← Back to the app</a></div>
+</header>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>What this is</div>
+  <p>A single self-contained HTML/JS application that (1) shows which GPS satellites are overhead for a chosen location and time, using live TLE almanac data and full SGP4/SDP4 orbit propagation, and (2) generates a simulated baseband IQ recording (<code>.wav</code>) of the resulting signal — for feeding into SDR/receiver test software, not for RF transmission.</p>
+  <p>The recording carries a genuinely real, decodable GPS navigation message: real LNAV subframes on L1 C/A and real CNAV framing/CRC/FEC on L2C, built from a real least-squares curve fit of the satellite's actual orbit — not placeholder random bits. See the <a href="https://github.com/jwkunz/Green_Olive/blob/main/ROADMAP.md" style="color:var(--cyan);">project roadmap</a> for the full list of what's real vs. simplified, and why.</p>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>1 — Location, time &amp; almanac</div>
+  <h3>Setting your observer position</h3>
+  <ul>
+    <li>Enter latitude/longitude directly, or tap <b>Use my location</b> to fill them from your browser's geolocation (you'll get a permission prompt).</li>
+    <li><b>Height</b> is your antenna height above the WGS84 ellipsoid, in meters — sea level is roughly 0. It has a small effect on elevation angles; the default (30m) is fine for most uses.</li>
+  </ul>
+  <h3>Setting the date/time</h3>
+  <p>Pick any date/time — past, present, or future within the accuracy of the current TLE data (orbit predictions degrade the further you get from the TLE's own epoch, typically good to days, not months). Tap <b>Now</b> to jump to the current moment.</p>
+  <h3>Fetching the almanac</h3>
+  <p>Tap <b>Fetch live almanac</b> to pull current GPS orbital elements (TLEs) from <a href="https://celestrak.org" style="color:var(--cyan);">celestrak.org</a>. This requires an internet connection. If the fetch fails (shown as a CDN or network error), you can paste TLE text manually into the box that appears — grab it from the linked CelesTrak page in any browser and paste it in.</p>
+  <div class="note">TLE-based orbits are propagated with SGP4/SDP4 (the industry-standard model), accurate to roughly 1km for near-term predictions — good for "what's overhead," not for survey-grade positioning.</div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>2 — Sky view</div>
+  <p>Tap <b>Compute sky view</b> after loading an almanac. This shows:</p>
+  <ul>
+    <li>A polar plot (N up) with a dot for every satellite above 5° elevation, sized/positioned by azimuth and elevation.</li>
+    <li>A data table with per-satellite azimuth, elevation, range, Doppler shift, ionospheric/tropospheric delay estimates, a synthetic clock bias, the modeled antenna/atmosphere amplitude factor, and the RMS residual of the real broadcast-ephemeris curve fit (should read a few meters or less — that's confirming the fit converged well).</li>
+  </ul>
+  <div class="note">Recompute any time you change location, time, or almanac data — it doesn't update automatically.</div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>3 — Generating an IQ recording</div>
+  <h3>Signal selection</h3>
+  <table>
+    <thead><tr><th>Signal</th><th>Carrier</th><th>Chip rate</th><th>Nav message</th></tr></thead>
+    <tbody>
+      <tr><td class="prn">L1 C/A</td><td>1575.42 MHz</td><td>1.023 Mcps</td><td>Real LNAV subframes 1/2/3</td></tr>
+      <tr><td class="prn">L2C</td><td>1227.60 MHz</td><td>1.023 Mcps (CM+CL multiplexed)</td><td>Real CNAV framing/CRC/FEC (types 10/11/30)</td></tr>
+      <tr><td class="prn">L5</td><td>1176.45 MHz</td><td>10.23 Mcps (I5/Q5)</td><td>Real CNAV framing/CRC/FEC (types 10/11/30)</td></tr>
+    </tbody>
+  </table>
+  <h3>Sample rate</h3>
+  <p>L1 C/A and L2C offer 2.046 / 4.092 / 5.115 MHz options. L5's much higher chip rate needs at least 20.46 MHz to represent properly — the sample rate dropdown filters automatically when you pick L5.</p>
+  <h3>Duration</h3>
+  <p>Any duration is allowed. Above 60 seconds you'll get a confirmation prompt showing the estimated file size, since sample rate × duration × 4 bytes/sample adds up fast (especially for L5).</p>
+  <h3>Front-end realism controls</h3>
+  <ul>
+    <li><b>Noise floor</b> — "Realistic" keeps the GPS signal well below the noise floor, matching real life (you won't see satellites in a raw time-domain plot without correlating — that's expected). "Low noise" makes the signal visually obvious for demos.</li>
+    <li><b>Front-end bandwidth</b> — simulates the receiver's anti-alias/channel-select filter.</li>
+    <li><b>AGC</b> — automatic gain control, which (realistically) regulates on total incoming power, not the buried GPS signal specifically.</li>
+    <li><b>ADC quantization</b> — real GNSS front-ends commonly use just 1-3 bit ADCs; this simulates that, with 2-bit as the realistic default.</li>
+  </ul>
+  <p>Tap <b>Generate WAV</b>. Generation runs in a background Worker so the page stays responsive; a progress bar shows each stage (baseband synthesis → filtering → AGC → quantization → WAV encoding). The output file has I on the left channel, Q on the right, standard 16-bit PCM.</p>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>4 — Correlator / acquisition proof</div>
+  <p>After generating an <b>L1 C/A</b> or <b>L2C</b> recording, pick a PRN from the dropdown and tap <b>Run correlator</b>. This runs a real code-phase × Doppler acquisition search — the same principle a real GPS receiver's acquisition engine uses — to prove the signal is actually recoverable from the noise, not just plausible-looking.</p>
+  <p>Results show the recovered Doppler and code phase next to the known truth values (since this is a simulator, we know the right answer), plus a heatmap of the search grid with the peak highlighted.</p>
+  <div class="note">L5 correlation isn't supported: its 10.23 Mcps codes make a full-resolution brute-force search roughly 100x more computationally expensive than L1/L2C — well beyond what's practical in a browser without an FFT-based fast-correlation implementation.</div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>Technical notes &amp; honest limitations</div>
+  <p>This project aims to be as physically real as practical, and documents deviations explicitly rather than hiding them. Highlights:</p>
+  <ul>
+    <li><b>Ephemeris:</b> a genuine Levenberg-Marquardt least-squares fit of real IS-GPS-200 broadcast parameters against SGP4-propagated truth — not a repackaged orbit. Typically converges to sub-meter accuracy.</li>
+    <li><b>LNAV (L1 C/A):</b> real parity algorithm, real subframe 1/2/3 bit layout, verified via independent encode/decode round trips.</li>
+    <li><b>CNAV (L2C/L5):</b> real message framing, real CRC-24Q, real rate-1/2 K=7 convolutional FEC (171/133 octal) — all independently verified. The internal 238-bit payload field layout reuses the LNAV field widths as a documented simplification, since the exact real CNAV Table 30-I bit positions couldn't be independently verified from a primary source.</li>
+    <li><b>Multipath:</b> a single automatic ground-bounce-style reflection per satellite, stronger near the horizon — not a full scenario-configurable multipath model.</li>
+    <li><b>Clock bias:</b> synthetic per-satellite values (real values require the broadcast message itself, unavailable from TLE data alone), but genuinely encoded into the transmitted message.</li>
+  </ul>
+  <p>Full details: see <a href="https://github.com/jwkunz/Green_Olive/blob/main/ROADMAP.md" style="color:var(--cyan);">ROADMAP.md</a> in the project repository.</p>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>Troubleshooting</div>
+  <ul>
+    <li><b>"Fetch live almanac" fails</b> — usually a network/CORS restriction in your browser. Use the manual TLE paste fallback that appears.</li>
+    <li><b>satellite.js fails to load</b> — the app depends on one CDN script; if your network blocks <code>cdn.jsdelivr.net</code>, the app won't be able to propagate orbits. Check your network settings or try a different network.</li>
+    <li><b>Generation seems slow</b> — expected for large duration × sample rate combinations (especially L5). It runs in a background Worker, so the page itself won't freeze; watch the progress bar.</li>
+    <li><b>Correlator finds nothing / wrong values</b> — make sure you generated an L1 C/A or L2C recording first (not L5), and that the recording is at least a few milliseconds long.</li>
+  </ul>
+</div>
+
+<footer>
+  <p>Copyright &copy; 2026 Numerius Engineering LLC. Released under the MIT License.</p>
+  <pre>MIT License
+
+Copyright (c) 2026 Numerius Engineering LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+  <p>Not for RF transmission. This tool generates simulated test data files only.</p>
+</footer>
+
+</body>
+</html>
