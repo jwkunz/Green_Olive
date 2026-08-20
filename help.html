@@ -10,7 +10,7 @@
 <body>
 <header>
   <h1>▲ Help &amp; Documentation</h1>
-  <div class="sub">GPS Sky &amp; Signal Simulator <span class="badge" id="verBadge">v1.0.0</span> · <a href="gps-sim.html">← Back to the app</a></div>
+  <div class="sub">GPS Sky &amp; Signal Simulator <span class="badge" id="verBadge">v1.1.0</span> · <a href="gps-sim.html">← Back to the app</a></div>
 </header>
 
 <div class="panel">
@@ -71,7 +71,7 @@
 <div class="panel">
   <div class="panel-title"><span class="dot"></span>4 — Correlator / acquisition proof</div>
   <p>After generating an <b>L1 C/A</b> or <b>L2C</b> recording, pick a PRN from the dropdown and tap <b>Run correlator</b>. This runs a real code-phase × Doppler acquisition search — the same principle a real GPS receiver's acquisition engine uses — to prove the signal is actually recoverable from the noise, not just plausible-looking.</p>
-  <p>Results show the recovered Doppler and code phase next to the known truth values (since this is a simulator, we know the right answer), plus a heatmap of the search grid with the peak highlighted.</p>
+  <p>Results show the recovered Doppler and code phase next to the known truth values (since this is a simulator, we know the right answer), plus a heatmap of the search grid — code phase on the X axis, Doppler on the Y axis, a color bar showing correlation power relative to the peak, and the detected peak boxed in red.</p>
   <div class="note">L5 correlation isn't supported: its 10.23 Mcps codes make a full-resolution brute-force search roughly 100x more computationally expensive than L1/L2C — well beyond what's practical in a browser without an FFT-based fast-correlation implementation.</div>
 </div>
 

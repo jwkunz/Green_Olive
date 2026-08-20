@@ -2,7 +2,7 @@
 // GPS Sky & Signal Simulator
 // Copyright (c) 2026 Numerius Engineering LLC
 // Released under the MIT License — see LICENSE / help.html for full text.
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 // ---------- constants ----------
 const WGS84_A = 6378137.0, WGS84_F = 1/298.257223563;

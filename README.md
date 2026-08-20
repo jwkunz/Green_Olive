@@ -10,7 +10,7 @@ A web app based GPS signal simulator
    broadcast navigation message content — for feeding into SDR/receiver
    test software, not for RF transmission.
 
-Current version: **v1.0.0**.
+Current version: **v1.1.0**.
 
 See [`ROADMAP.md`](ROADMAP.md) for the fidelity development plan and current
 known limitations, and [`help.html`](help.html) for user-facing documentation.
