@@ -33,11 +33,20 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
     generation (10.23 Mcps codes, ~10x the sample-rate/file-size cost of
     L1/L2, separate 1176.45 MHz carrier — see below)
 
-- [ ] **Phase 5 — Performance & proof**
-  - Move IQ generation into a Web Worker (unblocks higher sample
-    rates/durations without freezing the UI)
-  - Correlator view to despread the noise-buried signal live, proving
-    satellites are recoverable — same principle a real receiver uses
+- [x] **Phase 5 — Performance & proof** *(done)*
+  - IQ generation now runs in a Web Worker (embedded as a Blob-URL script
+    since this is a single-file app) — UI stays responsive during
+    generation regardless of duration/sample rate
+  - Duration cap removed (was hard-capped at 10s); now arbitrary, with a
+    confirmation prompt above 60s warning about time/memory cost
+  - On-demand correlator/acquisition panel: pick a PRN from the last L1 C/A
+    recording, runs a code-phase x Doppler search with non-coherent
+    integration across up to 20ms, and shows the recovered peak against the
+    known truth values plus a heatmap — proves the noise-buried signal is
+    actually recoverable, the same principle a real acquisition engine uses
+  - Correlator currently supports L1 C/A recordings only (L2C CM
+    correlation would need a much larger phase/block search space —
+    noted as a future extension, not pursued yet given the cost/benefit)
 
 - [ ] **Phase 6 — Selectable L5 signal generation**
   - Add L5 (1176.45 MHz, 10.23 Mcps I5/Q5 codes with NH secondary codes) as
@@ -48,6 +57,10 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
 
 ## Known limitations (current)
 
+- Correlator only supports L1 C/A recordings; L2C CM correlation isn't
+  implemented (would need a much larger phase/block search space)
+- Correlator's Doppler search is on a 500 Hz grid (nearest-bin match, not
+  fine-resolution), and only searches the first ~20ms of a recording
 - L2C CNAV symbols are a synthetic 50 sps stream, not decoded/re-encoded
   real CNAV messages (ephemeris/clock/almanac) — same reason as LNAV below
 - Multipath is a single automatic reflection tuned by elevation only; it
