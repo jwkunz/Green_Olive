@@ -128,6 +128,29 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
     FFT-based fast-correlation approach — documented as a known gap rather
     than shipping a coarse-stepped version already proven not to work
 
+- [x] **Phase 8 — Modularize into separate files** *(done)*
+  - Split the single ~1700-line `gps-sim.html` into 14 focused JS files
+    plus 3 CSS files (see README's "Project structure" section for the
+    full layout). Removed ~115 lines of dead code discovered during the
+    split (a leftover main-thread copy of code generators/DSP functions
+    that nothing called anymore, since generation and correlation had
+    both moved into the Worker in earlier phases)
+  - Worker source is split into 5 logical modules (codegen, DSP, LNAV,
+    CNAV, message dispatch), each still just a JS-source-text string —
+    assembled into one `WORKER_SRC` at runtime and turned into a real
+    Worker via a Blob URL, preserving `file://` compatibility (a plain
+    `new Worker('path.js')` doesn't work from a local file page in most
+    browsers)
+  - Verified, not just asserted: extracted worker modules were checked
+    byte-for-byte content-equivalent to the original (order-independent
+    diff, zero difference beyond reordering — safe since JS function
+    declarations hoist), then re-run through the full existing test suite
+    (generate() for L1/L2C/L5, correlate() for L1/L2C against known-truth
+    signals) with identical results to pre-refactor. Main-thread modules
+    were verified the same way, plus a full simulated page load of all 14
+    files in dependency order, plus an end-to-end `fitEphemeris` check
+    producing the exact same 0.7053m RMS result as before the split
+
 ## Roadmap notation
 `[x]` = done and verified. `[~]` = partially done, see sub-bullets for
 exactly what's shipped vs still pending.

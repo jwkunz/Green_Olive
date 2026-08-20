@@ -1,0 +1,30 @@
+/* Documentation-page-specific styles. Shared design tokens (--bg,
+   --phosphor, etc.) are in theme.css, which must be linked before this file. */
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--mono);}
+  body{padding:18px;max-width:900px;margin:0 auto;line-height:1.6;}
+  header{border-bottom:1px solid var(--panel-line);padding-bottom:14px;margin-bottom:20px;}
+  h1{font-size:1.15rem;letter-spacing:.14em;text-transform:uppercase;color:var(--phosphor);margin:0 0 4px 0;font-weight:600;}
+  .sub{color:var(--text-dim);font-size:.78rem;letter-spacing:.04em;}
+  .sub a{color:var(--cyan);text-decoration:none;border-bottom:1px dashed var(--cyan);}
+  .sub a:hover{color:var(--phosphor);border-color:var(--phosphor);}
+  .panel{background:var(--panel);border:1px solid var(--panel-line);border-radius:2px;padding:16px 18px;margin-bottom:14px;}
+  .panel-title{color:var(--cyan);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+  .panel-title .dot{width:6px;height:6px;border-radius:50%;background:var(--phosphor);box-shadow:0 0 6px var(--phosphor);}
+  h3{color:var(--amber);font-size:.85rem;letter-spacing:.04em;margin:16px 0 6px 0;}
+  h3:first-child{margin-top:0;}
+  p{font-size:.85rem;margin:6px 0;}
+  ul,ol{font-size:.85rem;margin:6px 0;padding-left:22px;}
+  li{margin:4px 0;}
+  code{background:#0a1114;border:1px solid var(--panel-line);padding:1px 5px;border-radius:2px;color:var(--phosphor);font-size:.82em;}
+  pre{background:#0a1114;border:1px solid var(--panel-line);border-radius:2px;padding:12px;overflow-x:auto;font-size:.76rem;color:var(--text-dim);white-space:pre-wrap;}
+  table{border-collapse:collapse;width:100%;font-size:.8rem;margin:8px 0;}
+  th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--panel-line);}
+  th{color:var(--text-dim);font-weight:500;font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;}
+  td.prn{color:var(--phosphor);}
+  .note{font-size:.78rem;color:var(--text-dim);border-left:2px solid var(--panel-line);padding-left:10px;margin:10px 0;}
+  .note.warn{border-color:var(--amber);color:var(--amber);}
+  .badge{display:inline-block;background:#0a1114;border:1px solid var(--phosphor-dim);color:var(--phosphor);font-size:.68rem;padding:2px 8px;border-radius:10px;letter-spacing:.04em;}
+  a.back{color:var(--cyan);text-decoration:none;font-size:.8rem;}
+  a.back:hover{color:var(--phosphor);}
+  footer{margin-top:24px;padding-top:14px;border-top:1px solid var(--panel-line);color:var(--text-dim);font-size:.72rem;}
