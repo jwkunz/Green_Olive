@@ -15,7 +15,7 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
   - Ionospheric/tropospheric delay (Klobuchar model)
   - Satellite clock bias terms
 
-- [ ] **Phase 3 — Receiver-side realism**
+- [x] **Phase 3 — Receiver-side realism** *(done)*
   - IF filtering / front-end bandwidth limiting
   - AGC simulation
   - Quantization noise modeling beyond basic int16 clipping
@@ -32,6 +32,12 @@ simulated L1 C/A baseband IQ generator. Each phase is independently shippable.
 
 ## Known limitations (current)
 
+- Front-end filter and AGC are baseband-equivalent approximations (real
+  lowpass applied independently to I/Q), not a modeled real/complex bandpass
+  RF chain
+- ADC quantizer step sizes are tuned to commonly-cited near-optimal values
+  for a Gaussian-dominated input, not derived per-signal from first
+  principles — exact optimal thresholds are their own design problem
 - Nav message bits are a synthetic 50 bps stream with the real TLM preamble,
   not decoded/re-encoded real subframes (ephemeris/clock/almanac words) —
   that requires the actual broadcast nav message, unavailable from TLE data

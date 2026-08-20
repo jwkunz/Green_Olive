@@ -123,8 +123,29 @@
       <select id="noise"><option value="0.6">Realistic (weak signal)</option><option value="0.15">Low noise (easy to see)</option></select>
     </div>
   </div>
+  <div class="row">
+    <div class="field"><label>Front-end bandwidth</label>
+      <select id="bw">
+        <option value="2000000">2 MHz (narrow, C/A only)</option>
+        <option value="4000000">4 MHz</option>
+        <option value="8000000">8 MHz (wideband)</option>
+      </select>
+    </div>
+    <div class="field"><label>AGC</label>
+      <select id="agc"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+    </div>
+    <div class="field"><label>ADC quantization</label>
+      <select id="qbits">
+        <option value="2">2-bit (4 levels — typical GNSS front-end)</option>
+        <option value="1">1-bit (hard-limit, 2 levels)</option>
+        <option value="3">3-bit (8 levels)</option>
+        <option value="16">16-bit (idealized, no quantization)</option>
+      </select>
+    </div>
+  </div>
   <div class="estimate" id="sizeEstimate"></div>
   <div class="note warn">Real GPS C/A signal power sits well below the noise floor — this sim keeps that ratio, so satellites won't be visible in a raw time-domain plot without correlation, same as a real receiver.</div>
+  <div class="note">Signal chain: ideal sum of satellites + thermal noise → front-end bandwidth filter → AGC (regulates on total power, same as real hardware — it can't "see" the buried GPS signal specifically) → ADC quantization. Quantized output is still stored in a standard 16-bit WAV container for compatibility; only a handful of amplitude levels are actually used.</div>
   <div class="row" style="margin-top:8px;"><button id="genBtn" disabled>Generate WAV</button></div>
   <div class="progresswrap"><div class="progressbar" id="progressBar"></div></div>
   <div id="genStatus" class="status"></div>
@@ -428,6 +449,68 @@ function generateNavBits(prn, durationSec){
   return bits;
 }
 
+// ---------- Phase 3: front-end filter, AGC, ADC quantization ----------
+
+// 2nd-order Butterworth lowpass (bilinear transform), applied identically to
+// I and Q as a baseband-equivalent of the real front-end's band-select filter.
+function makeButterworthLowpass(cutoffHz, fs){
+  const wc = Math.tan(Math.PI*cutoffHz/fs);
+  const k2 = wc*wc, sqrt2 = Math.SQRT2;
+  const a0 = k2 + sqrt2*wc + 1;
+  const b0 = k2/a0, b1 = 2*b0, b2 = b0;
+  const a1 = 2*(k2-1)/a0, a2 = (k2 - sqrt2*wc + 1)/a0;
+  let x1=0,x2=0,y1=0,y2=0;
+  return function(x0){
+    const y0 = b0*x0 + b1*x1 + b2*x2 - a1*y1 - a2*y2;
+    x2=x1; x1=x0; y2=y1; y1=y0;
+    return y0;
+  };
+}
+
+function applyFrontEndFilter(iData, qData, cutoffHz, fs){
+  const filtI = makeButterworthLowpass(cutoffHz, fs);
+  const filtQ = makeButterworthLowpass(cutoffHz, fs);
+  for(let n=0;n<iData.length;n++){
+    iData[n] = filtI(iData[n]);
+    qData[n] = filtQ(qData[n]);
+  }
+}
+
+// AGC regulates on total instantaneous I/Q power (signal+noise combined) —
+// exactly like real hardware, which has no way to distinguish the buried
+// GPS signal from the noise it's riding on.
+function applyAGC(iData, qData, fs, targetAmplitude){
+  const tau = 0.001; // 1 ms time constant
+  const alpha = 1 - Math.exp(-1/(tau*fs));
+  let powerEst = targetAmplitude*targetAmplitude;
+  for(let n=0;n<iData.length;n++){
+    const inst = iData[n]*iData[n] + qData[n]*qData[n];
+    powerEst += alpha*(inst - powerEst);
+    const gain = targetAmplitude/Math.sqrt(Math.max(powerEst,1e-9));
+    iData[n] *= gain;
+    qData[n] *= gain;
+  }
+}
+
+// Uniform mid-tread quantizer. Step size per bit depth is tuned near the
+// commonly-cited approximately-optimal spacing for a Gaussian-dominated
+// input (real GNSS front-ends are noise-dominated pre-correlation) rather
+// than derived exactly per-signal, since that's a whole optimization topic
+// on its own.
+function quantizeArray(data, bits, sigma){
+  const levels = 1<<bits; // 2,4,8...
+  const half = levels/2;
+  const stepFactor = bits===1 ? 1.0 : bits===2 ? 0.98 : bits===3 ? 0.5 : 0.35;
+  const step = sigma*stepFactor;
+  const out = new Float32Array(data.length);
+  for(let n=0;n<data.length;n++){
+    let idx = Math.round(data[n]/step);
+    idx = Math.max(-half, Math.min(half-1, idx));
+    out[n] = idx + 0.5; // level center
+  }
+  return out;
+}
+
 // ---------- size estimate ----------
 function updateSizeEstimate(){
   const fs = parseInt($('fs').value,10);
@@ -505,14 +588,45 @@ $('genBtn').onclick = async () => {
   }
 
   function finalizeWav(){
-    setStatus('genStatus','Encoding WAV file...');
-    // normalize to int16 range
-    let peak = 0;
-    for(let n=0;n<totalSamples;n++){ peak = Math.max(peak, Math.abs(iData[n]), Math.abs(qData[n])); }
-    const scale = peak>0 ? (32767*0.9)/peak : 1;
+    setStatus('genStatus','Applying front-end filter...');
+    const bwHz = parseInt($('bw').value,10);
+    const cutoffHz = Math.min(bwHz/2, fs*0.475); // per-channel cutoff, clamped below Nyquist
+    applyFrontEndFilter(iData, qData, cutoffHz, fs);
 
+    const agcOn = $('agc').value === '1';
+    const targetAmplitude = 1.0;
+    if(agcOn){
+      setStatus('genStatus','Applying AGC...');
+      applyAGC(iData, qData, fs, targetAmplitude);
+    }
+
+    const qbits = parseInt($('qbits').value,10);
+    let outI, outQ, scale;
+    if(qbits < 16){
+      setStatus('genStatus','Quantizing to '+qbits+'-bit ADC levels...');
+      // sigma: AGC drives per-channel RMS toward targetAmplitude/sqrt(2);
+      // if AGC is off, estimate sigma directly from the data instead.
+      let sigma = targetAmplitude/Math.SQRT2;
+      if(!agcOn){
+        let sumsq=0;
+        for(let n=0;n<iData.length;n++) sumsq += iData[n]*iData[n]+qData[n]*qData[n];
+        sigma = Math.sqrt(sumsq/(2*iData.length));
+      }
+      outI = quantizeArray(iData, qbits, sigma);
+      outQ = quantizeArray(qData, qbits, sigma);
+      const half = (1<<qbits)/2;
+      scale = (32760*0.9)/half;
+    }else{
+      setStatus('genStatus','Encoding WAV file...');
+      outI = iData; outQ = qData;
+      let peak = 0;
+      for(let n=0;n<outI.length;n++){ peak = Math.max(peak, Math.abs(outI[n]), Math.abs(outQ[n])); }
+      scale = peak>0 ? (32767*0.9)/peak : 1;
+    }
+
+    const totalSamplesLocal = outI.length;
     const bytesPerSample=2, numChannels=2;
-    const dataSize = totalSamples*numChannels*bytesPerSample;
+    const dataSize = totalSamplesLocal*numChannels*bytesPerSample;
     const buffer = new ArrayBuffer(44+dataSize);
     const view = new DataView(buffer);
     function writeStr(off,str){ for(let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i)); }
@@ -526,15 +640,16 @@ $('genBtn').onclick = async () => {
     writeStr(36,'data'); view.setUint32(40, dataSize, true);
 
     let off=44;
-    for(let n=0;n<totalSamples;n++){
-      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(iData[n]*scale))), true); off+=2;
-      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(qData[n]*scale))), true); off+=2;
+    for(let n=0;n<totalSamplesLocal;n++){
+      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(outI[n]*scale))), true); off+=2;
+      view.setInt16(off, Math.max(-32768,Math.min(32767, Math.round(outQ[n]*scale))), true); off+=2;
     }
 
     const blob = new Blob([buffer], {type:'audio/wav'});
     const url = URL.createObjectURL(blob);
     const mb = (blob.size/1e6).toFixed(1);
-    $('dlWrap').innerHTML = `<a class="dl" href="${url}" download="gps_sim_iq.wav">⬇ Download gps_sim_iq.wav (${mb} MB, L=I / R=Q, ${fs} Hz, ${sats.length} satellites)</a>`;
+    const qLabel = qbits<16 ? (qbits+'-bit ADC') : '16-bit idealized';
+    $('dlWrap').innerHTML = `<a class="dl" href="${url}" download="gps_sim_iq.wav">⬇ Download gps_sim_iq.wav (${mb} MB, L=I / R=Q, ${fs} Hz, ${sats.length} satellites, ${qLabel}${agcOn?', AGC on':', AGC off'})</a>`;
     setStatus('genStatus','Done.','ok');
     $('genBtn').disabled = false;
   }
